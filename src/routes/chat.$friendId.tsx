@@ -100,9 +100,23 @@ function ChatPage() {
 
     void load();
 
+    const upsert = (m: Message) =>
+      setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
+
     const channel = supabase
-      .channel(`chat-${friendId}`)
-      // 自分宛ての受信だけをサーバー側で絞る（全ユーザーの通信を受け取らない）
+      .channel(pairChannelName("dm", user.id, friendId), {
+        config: { broadcast: { self: false } },
+      })
+      // 相手が送った瞬間に直接届く経路（DB 経由より速く、通信量も少ない）
+      .on("broadcast", { event: "msg" }, ({ payload }) => {
+        upsert(payload as Message);
+      })
+      .on("broadcast", { event: "del" }, ({ payload }) => {
+        const id = (payload as { id?: string })?.id;
+        if (!id) return;
+        setMessages((prev) => prev.filter((x) => x.id !== id));
+      })
+      // 念のための保険：自分宛ての受信だけをサーバー側で絞る
       .on(
         "postgres_changes",
         {
@@ -114,22 +128,7 @@ function ChatPage() {
         (payload) => {
           const m = payload.new as Message;
           if (m.sender_id !== friendId) return;
-          setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
-        },
-      )
-      // 自分が送った分（別タブ/別端末も含む）
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "messages",
-          filter: `sender_id=eq.${user.id}`,
-        },
-        (payload) => {
-          const m = payload.new as Message;
-          if (m.receiver_id !== friendId) return;
-          setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
+          upsert(m);
         },
       )
       // 既読などの更新: 相手宛てに送った自分のメッセージ
@@ -148,19 +147,6 @@ function ChatPage() {
       )
       .on(
         "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "messages",
-          filter: `receiver_id=eq.${user.id}`,
-        },
-        (payload) => {
-          const m = payload.new as Message;
-          setMessages((prev) => prev.map((x) => (x.id === m.id ? { ...x, ...m } : x)));
-        },
-      )
-      .on(
-        "postgres_changes",
         { event: "DELETE", schema: "public", table: "messages" },
         (payload) => {
           const removed = payload.old as { id?: string };
@@ -169,9 +155,11 @@ function ChatPage() {
         },
       )
       .subscribe();
+    liveRef.current = channel;
 
     return () => {
       cancelled = true;
+      liveRef.current = null;
       void supabase.removeChannel(channel);
     };
   }, [user, friendId]);
