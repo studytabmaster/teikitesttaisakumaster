@@ -133,12 +133,38 @@ function ProfilePage() {
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="avatar">アイコン画像のURL</Label>
+            <Label>アイコン画像</Label>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/png,image/jpeg,image/jpg,image/gif,image/webp,image/bmp,image/heic,image/*"
+              hidden
+              onChange={pickAvatar}
+            />
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => fileRef.current?.click()}
+                disabled={busy}
+              >
+                <ImagePlus className="mr-1 size-4" />
+                ファイルから選ぶ
+              </Button>
+              {avatarUrl && (
+                <Button variant="ghost" onClick={() => setAvatarUrl("")} disabled={busy}>
+                  削除
+                </Button>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              PNG / JPG / JPEG / GIF / WEBP に対応。正方形に切り抜いて自動で軽くします。
+            </p>
             <Input
               id="avatar"
-              value={avatarUrl}
+              value={avatarUrl.startsWith("data:") ? "" : avatarUrl}
               onChange={(e) => setAvatarUrl(e.target.value)}
-              placeholder="https://..."
+              placeholder="画像のURLを直接入力もできます"
             />
           </div>
           <Button variant="brand" size="pill" className="w-full" onClick={save} disabled={busy}>
