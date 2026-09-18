@@ -221,12 +221,20 @@ function ChatPage() {
       toast("オフラインのため、つながったら送信します");
       return;
     }
-    const { error } = await supabase
+    const { data: inserted, error } = await supabase
       .from("messages")
-      .insert({ sender_id: user.id, receiver_id: friendId, content: clean, reply_to_id: parentId });
+      .insert({ sender_id: user.id, receiver_id: friendId, content: clean, reply_to_id: parentId })
+      .select("*")
+      .maybeSingle();
     if (error) {
       enqueueMessage({ kind: "direct", senderId: user.id, targetId: friendId, content: clean });
       toast("送信できなかったので、送信待ちに入れました");
+      return;
+    }
+    // 自分の画面にはすぐ表示する（リアルタイム通知を待たない）
+    if (inserted) {
+      const m = inserted as Message;
+      setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
     }
   };
 
