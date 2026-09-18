@@ -14,6 +14,7 @@ import { CallOverlay } from "@/components/CallOverlay";
 import { loadRtcConfig } from "@/lib/ice";
 import { pairChannelName } from "@/lib/realtime";
 import { toast } from "sonner";
+import { LOW_MEDIA_CONSTRAINTS, applyLowBitrate } from "@/lib/callQuality";
 import {
   primeAudio,
   requestNotificationPermission,
@@ -225,15 +226,13 @@ export function CallProvider({ children }: { children: ReactNode }) {
   );
 
   const createPeerConnection = useCallback(async (wantVideo: boolean) => {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: true,
-      video: wantVideo ? { facingMode: "user" } : false,
-    });
+    const stream = await navigator.mediaDevices.getUserMedia(LOW_MEDIA_CONSTRAINTS(wantVideo));
     localRef.current = stream;
     setLocalStream(stream);
 
     const pc = new RTCPeerConnection(await loadRtcConfig());
     stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+    void applyLowBitrate(pc);
 
     const remote = new MediaStream();
     setRemoteStream(remote);
