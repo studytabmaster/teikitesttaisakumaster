@@ -34,6 +34,7 @@ import { Input } from "@/components/ui/input";
 import { formatTime, initials, type Message, type Profile } from "@/lib/rine";
 import { maskProfanity } from "@/lib/profanity";
 import { enqueueMessage, getOutboxFor, onOutboxChange, type PendingMessage } from "@/lib/outbox";
+import { pairChannelName } from "@/lib/realtime";
 import { compressImage } from "@/lib/compress";
 import { cn } from "@/lib/utils";
 
@@ -67,6 +68,12 @@ function ChatPage() {
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const liveRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+
+  // 送った内容を相手の画面へ即座に届ける（DB 反映を待たない）
+  const broadcastMessage = (m: Message) => {
+    void liveRef.current?.send({ type: "broadcast", event: "msg", payload: m });
+  };
 
   // オフラインで送信待ちになったメッセージ
   useEffect(() => {
