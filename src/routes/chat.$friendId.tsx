@@ -230,6 +230,7 @@ function ChatPage() {
     if (inserted) {
       const m = inserted as Message;
       setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
+      broadcastMessage(m);
     }
   };
 
@@ -287,6 +288,7 @@ function ChatPage() {
     if (inserted) {
       const m = inserted as Message;
       setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
+      broadcastMessage(m);
     }
   };
 
@@ -310,6 +312,7 @@ function ChatPage() {
     setMessages((prev) =>
       prev.filter((x) => x.id !== m.id).map((x) => (x.reply_to_id === m.id ? { ...x, reply_to_id: null } : x)),
     );
+    void liveRef.current?.send({ type: "broadcast", event: "del", payload: { id: m.id } });
     toast.success("完全に削除しました");
   };
 
