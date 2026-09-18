@@ -48,3 +48,24 @@ export async function compressImage(file: File): Promise<File> {
     return file;
   }
 }
+
+const AVATAR_EDGE = 256;
+const AVATAR_QUALITY = 0.72;
+
+/**
+ * アイコン用に正方形へ切り抜き、256px の JPEG データURLへ変換する。
+ * png / jpg / jpeg / gif / webp など、ブラウザが読める画像なら何でも対応。
+ */
+export async function makeAvatarDataUrl(file: File): Promise<string> {
+  const img = await loadImage(file);
+  const side = Math.min(img.width, img.height);
+  const sx = (img.width - side) / 2;
+  const sy = (img.height - side) / 2;
+  const canvas = document.createElement("canvas");
+  canvas.width = AVATAR_EDGE;
+  canvas.height = AVATAR_EDGE;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("canvas unavailable");
+  ctx.drawImage(img, sx, sy, side, side, 0, 0, AVATAR_EDGE, AVATAR_EDGE);
+  return canvas.toDataURL("image/jpeg", AVATAR_QUALITY);
+}
