@@ -9,6 +9,7 @@ import {
 } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { toast } from "sonner";
+import { LOW_MEDIA_CONSTRAINTS, applyLowBitrate } from "@/lib/callQuality";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { GroupCallOverlay } from "@/components/GroupCallOverlay";
@@ -97,6 +98,7 @@ export function GroupCallProvider({ children }: { children: ReactNode }) {
       pcsRef.current.set(peerId, pc);
 
       localRef.current?.getTracks().forEach((t) => pc.addTrack(t, localRef.current!));
+      void applyLowBitrate(pc);
 
       const remote = new MediaStream();
       pc.ontrack = (event) => {
@@ -152,10 +154,7 @@ export function GroupCallProvider({ children }: { children: ReactNode }) {
       setStatus("joining");
       rtcConfigRef.current = await loadRtcConfig();
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-          video: wantVideo ? { facingMode: "user" } : false,
-        });
+        const stream = await navigator.mediaDevices.getUserMedia(LOW_MEDIA_CONSTRAINTS(wantVideo));
         localRef.current = stream;
         setLocalStream(stream);
       } catch {
