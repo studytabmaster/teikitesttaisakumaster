@@ -449,3 +449,8 @@ export function useCall() {
   if (!ctx) throw new Error("useCall must be used within CallProvider");
   return ctx;
 }
+
+/** 通話機能が使えない場所（読み込み途中など）では null を返す安全版 */
+export function useCallOptional() {
+  return useContext(CallContext);
+}

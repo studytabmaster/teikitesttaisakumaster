@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Mic, MicOff, Phone, PhoneOff, Video, VideoOff } from "lucide-react";
-import { useCall } from "@/components/CallProvider";
+import { useCallOptional } from "@/components/CallProvider";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { formatDuration, initials } from "@/lib/rine";
 import { cn } from "@/lib/utils";
 
 export function CallOverlay() {
+  const call = useCallOptional();
   const {
     status,
     peer,
@@ -20,7 +21,7 @@ export function CallOverlay() {
     toggleCamera,
     localStream,
     remoteStream,
-  } = useCall();
+  } = call ?? ({} as NonNullable<typeof call>);
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
