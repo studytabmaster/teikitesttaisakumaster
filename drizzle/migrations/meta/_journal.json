@@ -1,0 +1,55 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1789718344070,
+      "tag": "0000_retention_cleanup_and_cron",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1789718365825,
+      "tag": "0001_cleanup_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789718810719,
+      "tag": "0002_add_username_login",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789719186421,
+      "tag": "0003_open_chat_rooms",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789721997920,
+      "tag": "0004_enable_realtime_for_chat_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789722787814,
+      "tag": "0005_app_state_cleanup_guard",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789723300224,
+      "tag": "0006_add_reply_to_messages",
+      "breakpoints": true
+    }
+  ]
+}
