@@ -50,6 +50,13 @@
       "when": 1789723300224,
       "tag": "0006_add_reply_to_messages",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789729671402,
+      "tag": "0007_ensure_realtime_tables",
+      "breakpoints": true
     }
   ]
 }
