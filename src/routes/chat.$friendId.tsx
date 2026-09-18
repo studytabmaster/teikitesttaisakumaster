@@ -272,16 +272,27 @@ function ChatPage() {
     }
     const parentId = replyTo?.id ?? null;
     setReplyTo(null);
-    const { error } = await supabase.from("messages").insert({
-      sender_id: user.id,
-      receiver_id: friendId,
-      content: "",
-      image_url: path,
-      media_type: isVideo ? "video" : "image",
-      reply_to_id: parentId,
-    });
+    const { data: inserted, error } = await supabase
+      .from("messages")
+      .insert({
+        sender_id: user.id,
+        receiver_id: friendId,
+        content: "",
+        image_url: path,
+        media_type: isVideo ? "video" : "image",
+        reply_to_id: parentId,
+      })
+      .select("*")
+      .maybeSingle();
     setUploading(false);
-    if (error) toast.error("送信できませんでした");
+    if (error) {
+      toast.error("送信できませんでした");
+      return;
+    }
+    if (inserted) {
+      const m = inserted as Message;
+      setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
+    }
   };
 
   const unsend = async (m: Message) => {
