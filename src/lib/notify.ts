@@ -51,6 +51,23 @@ function ensureCtx(): AudioContext | null {
   return audioCtx;
 }
 
+/** ユーザー操作のタイミングで音声を使える状態にしておく（着信音を確実に鳴らすため） */
+export function primeAudio() {
+  const ctx = ensureCtx();
+  if (!ctx) return;
+  // 無音を一瞬鳴らしてブラウザの再生ロックを解除する
+  try {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    gain.gain.value = 0.0001;
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.01);
+  } catch {
+    /* 無視 */
+  }
+}
+
 function ringOnce() {
   const ctx = ensureCtx();
   if (!ctx) return;
@@ -73,6 +90,16 @@ export function startRingtone() {
   ringOnce();
   ringTimer = window.setInterval(ringOnce, 2000);
   if (navigator.vibrate) navigator.vibrate([400, 200, 400, 200, 400]);
+  // 音がブロックされている場合は、最初のタップで鳴らし直す
+  const ctx = audioCtx;
+  if (ctx && ctx.state !== "running") {
+    const unlock = () => {
+      window.removeEventListener("pointerdown", unlock);
+      if (ringTimer === null) return;
+      void ctx.resume().then(() => ringOnce());
+    };
+    window.addEventListener("pointerdown", unlock, { once: true });
+  }
 }
 
 /** 着信音停止 */

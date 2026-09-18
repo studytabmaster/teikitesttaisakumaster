@@ -12,8 +12,10 @@ import { useAuth } from "@/hooks/useAuth";
 import type { CallSignal, Profile } from "@/lib/rine";
 import { CallOverlay } from "@/components/CallOverlay";
 import { loadRtcConfig } from "@/lib/ice";
+import { pairChannelName } from "@/lib/realtime";
 import { toast } from "sonner";
 import {
+  primeAudio,
   requestNotificationPermission,
   showIncomingCallNotification,
   startRingtone,
@@ -45,6 +47,14 @@ const CallContext = createContext<CallContextValue | null>(null);
 
 // STUN/TURN は loadRtcConfig() でサーバーから取得（TURN 経由で厳しい回線でもつながる）
 
+type RtSignal = {
+  kind: CallSignal["kind"];
+  payload: unknown;
+  video: boolean;
+  from_user: string;
+  to_user: string;
+};
+
 export function CallProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const [status, setStatus] = useState<CallStatus>("idle");
@@ -62,7 +72,58 @@ export function CallProvider({ children }: { children: ReactNode }) {
   const pendingOffer = useRef<RTCSessionDescriptionInit | null>(null);
   const pendingIce = useRef<RTCIceCandidateInit[]>([]);
 
-  const sendSignal = useCallback(
+  const statusRef = useRef(status);
+  const videoRef = useRef(video);
+  useEffect(() => {
+    statusRef.current = status;
+    videoRef.current = video;
+  }, [status, video]);
+
+  // 通話専用の直通チャンネル（ICE などの大量のやり取りをここで行い、DB を使わない）
+  const callChanRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const peerReadyRef = useRef(false);
+  const rtQueue = useRef<RtSignal[]>([]);
+  const handleSignalRef = useRef<(s: CallSignal) => void | Promise<void>>(() => {});
+
+  const closeCallChannel = useCallback(() => {
+    peerReadyRef.current = false;
+    rtQueue.current = [];
+    const ch = callChanRef.current;
+    callChanRef.current = null;
+    if (ch) void supabase.removeChannel(ch);
+  }, []);
+
+  const openCallChannel = useCallback(
+    (peerId: string) => {
+      if (!user || callChanRef.current) return;
+      peerReadyRef.current = false;
+      rtQueue.current = [];
+      const ch = supabase
+        .channel(pairChannelName("call", user.id, peerId), {
+          config: { broadcast: { self: false } },
+        })
+        .on("broadcast", { event: "ready" }, () => {
+          const first = !peerReadyRef.current;
+          peerReadyRef.current = true;
+          // 相手にもこちらの準備完了を返す（1往復で止まる）
+          if (first) void ch.send({ type: "broadcast", event: "ready", payload: {} });
+          const queued = rtQueue.current;
+          rtQueue.current = [];
+          for (const m of queued) void ch.send({ type: "broadcast", event: "sig", payload: m });
+        })
+        .on("broadcast", { event: "sig" }, ({ payload }) => {
+          void handleSignalRef.current(payload as CallSignal);
+        })
+        .subscribe((st) => {
+          if (st === "SUBSCRIBED") void ch.send({ type: "broadcast", event: "ready", payload: {} });
+        });
+      callChanRef.current = ch;
+    },
+    [user],
+  );
+
+  // DB 経由（相手がアプリのどこにいても確実に届く）
+  const sendDbSignal = useCallback(
     async (kind: CallSignal["kind"], payload: unknown, isVideo = false) => {
       const to = peerIdRef.current;
       if (!user || !to) return;
@@ -77,8 +138,37 @@ export function CallProvider({ children }: { children: ReactNode }) {
     [user],
   );
 
+  // 直通チャンネル経由（速くて通信量も少ない。相手の準備ができるまで一時保管）
+  const sendRtSignal = useCallback(
+    (kind: CallSignal["kind"], payload: unknown, isVideo = false) => {
+      const to = peerIdRef.current;
+      if (!user || !to) return;
+      const msg: RtSignal = { kind, payload, video: isVideo, from_user: user.id, to_user: to };
+      if (!callChanRef.current || !peerReadyRef.current) {
+        rtQueue.current.push(msg);
+        return;
+      }
+      void callChanRef.current.send({ type: "broadcast", event: "sig", payload: msg });
+    },
+    [user],
+  );
+
+  const sendSignal = useCallback(
+    async (kind: CallSignal["kind"], payload: unknown, isVideo = false) => {
+      if (kind === "ice") {
+        // 接続のための細かいやり取りは直通のみ（DB に書かないので無料枠にやさしい）
+        sendRtSignal(kind, payload, isVideo);
+        return;
+      }
+      if (kind !== "offer") sendRtSignal(kind, payload, isVideo);
+      await sendDbSignal(kind, payload, isVideo);
+    },
+    [sendRtSignal, sendDbSignal],
+  );
+
   const cleanup = useCallback(() => {
     stopRingtone();
+    closeCallChannel();
     pcRef.current?.close();
     pcRef.current = null;
     localRef.current?.getTracks().forEach((t) => t.stop());
@@ -93,7 +183,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
     setSeconds(0);
     setMuted(false);
     setCameraOff(false);
-  }, []);
+  }, [closeCallChannel]);
 
   // 応答がなかった通話を「不在着信」としてトークに残す
   const logMissedCall = useCallback(
@@ -114,16 +204,24 @@ export function CallProvider({ children }: { children: ReactNode }) {
     logMissedCallRef.current = logMissedCall;
   }, [logMissedCall]);
 
+  // stable refs to avoid stale closures inside RTC callbacks
+  const sendSignalRef = useRef(sendSignal);
+  const cleanupRef = useRef(cleanup);
+  useEffect(() => {
+    sendSignalRef.current = sendSignal;
+    cleanupRef.current = cleanup;
+  }, [sendSignal, cleanup]);
+
   const hangUp = useCallback(
     (notify = true) => {
       // 発信中（相手が応答していない）状態で切った場合は不在着信を記録
       if (statusRef.current === "calling" && peerIdRef.current) {
         void logMissedCallRef.current(peerIdRef.current, videoRef.current);
       }
-      if (notify) void sendSignal("end", null);
+      if (notify) void sendSignalRef.current("end", null);
       cleanup();
     },
-    [sendSignal, cleanup],
+    [cleanup],
   );
 
   const createPeerConnection = useCallback(async (wantVideo: boolean) => {
@@ -157,14 +255,6 @@ export function CallProvider({ children }: { children: ReactNode }) {
     return pc;
   }, []);
 
-  // stable refs to avoid stale closures inside RTC callbacks
-  const sendSignalRef = useRef(sendSignal);
-  const cleanupRef = useRef(cleanup);
-  useEffect(() => {
-    sendSignalRef.current = sendSignal;
-    cleanupRef.current = cleanup;
-  }, [sendSignal, cleanup]);
-
   const startCall = useCallback(
     async (target: Profile, wantVideo: boolean) => {
       if (status !== "idle") return;
@@ -173,6 +263,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
         setPeer(target);
         setVideo(wantVideo);
         setStatus("calling");
+        openCallChannel(target.id);
         const pc = await createPeerConnection(wantVideo);
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
@@ -182,7 +273,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
         cleanup();
       }
     },
-    [status, createPeerConnection, cleanup],
+    [status, createPeerConnection, cleanup, openCallChannel],
   );
 
   const acceptCall = useCallback(async () => {
@@ -204,7 +295,72 @@ export function CallProvider({ children }: { children: ReactNode }) {
     }
   }, [video, createPeerConnection, hangUp]);
 
-  // realtime signaling
+  // 着信・応答・切断の処理（DB 経由と直通チャンネルの両方から呼ばれる。二重でも安全）
+  const handleSignal = async (signal: CallSignal) => {
+    const pc = pcRef.current;
+
+    if (signal.kind === "offer") {
+      if (statusRef.current !== "idle") {
+        if (peerIdRef.current === signal.from_user) return;
+        peerIdRef.current = signal.from_user;
+        await sendDbSignal("reject", null);
+        peerIdRef.current = null;
+        return;
+      }
+      peerIdRef.current = signal.from_user;
+      pendingOffer.current = signal.payload as RTCSessionDescriptionInit;
+      setVideo(signal.video);
+      setStatus("incoming");
+      startRingtone();
+      openCallChannel(signal.from_user);
+      const { data } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", signal.from_user)
+        .maybeSingle();
+      setPeer((data as Profile) ?? null);
+      showIncomingCallNotification(
+        (data as Profile | null)?.display_name ?? "不明なユーザー",
+        signal.video,
+      );
+      return;
+    }
+
+    if (signal.kind === "answer") {
+      if (!pc || pc.signalingState !== "have-local-offer") return;
+      await pc.setRemoteDescription(
+        new RTCSessionDescription(signal.payload as RTCSessionDescriptionInit),
+      );
+      for (const c of pendingIce.current) await pc.addIceCandidate(new RTCIceCandidate(c));
+      pendingIce.current = [];
+      setStatus("connecting");
+      return;
+    }
+
+    if (signal.kind === "ice") {
+      const candidate = signal.payload as RTCIceCandidateInit;
+      if (pc?.remoteDescription) {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {});
+      } else {
+        pendingIce.current.push(candidate);
+      }
+      return;
+    }
+
+    if (signal.kind === "end" || signal.kind === "reject") {
+      if (statusRef.current === "idle") return;
+      if (peerIdRef.current && signal.from_user !== peerIdRef.current) return;
+      // 発信中に相手が拒否/切断した場合は不在着信として記録
+      if (statusRef.current === "calling" && peerIdRef.current) {
+        void logMissedCallRef.current(peerIdRef.current, videoRef.current);
+      }
+      toast(signal.kind === "reject" ? "応答がありませんでした" : "通話が終了しました");
+      cleanupRef.current();
+    }
+  };
+  handleSignalRef.current = handleSignal;
+
+  // 着信の呼び出しは DB 経由で受け取る（どの画面にいても届く）
   useEffect(() => {
     if (!user) return;
     const channel = supabase
@@ -217,65 +373,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
           table: "call_signals",
           filter: `to_user=eq.${user.id}`,
         },
-        async (payload) => {
-          const signal = payload.new as CallSignal;
-          const pc = pcRef.current;
-
-          if (signal.kind === "offer") {
-            if (statusRef.current !== "idle") {
-              peerIdRef.current = signal.from_user;
-              await sendSignalRef.current("reject", null);
-              peerIdRef.current = null;
-              return;
-            }
-            peerIdRef.current = signal.from_user;
-            pendingOffer.current = signal.payload as RTCSessionDescriptionInit;
-            setVideo(signal.video);
-            setStatus("incoming");
-            startRingtone();
-            const { data } = await supabase
-              .from("profiles")
-              .select("*")
-              .eq("id", signal.from_user)
-              .maybeSingle();
-            setPeer((data as Profile) ?? null);
-            showIncomingCallNotification(
-              (data as Profile | null)?.display_name ?? "不明なユーザー",
-              signal.video,
-            );
-            return;
-          }
-
-          if (signal.kind === "answer" && pc) {
-            await pc.setRemoteDescription(
-              new RTCSessionDescription(signal.payload as RTCSessionDescriptionInit),
-            );
-            for (const c of pendingIce.current) await pc.addIceCandidate(new RTCIceCandidate(c));
-            pendingIce.current = [];
-            setStatus("connecting");
-            return;
-          }
-
-          if (signal.kind === "ice") {
-            const candidate = signal.payload as RTCIceCandidateInit;
-            if (pc?.remoteDescription) {
-              await pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {});
-            } else {
-              pendingIce.current.push(candidate);
-            }
-            return;
-          }
-
-          if (signal.kind === "end" || signal.kind === "reject") {
-            if (statusRef.current !== "idle") {
-              // 発信中に相手が拒否/切断した場合は不在着信として記録
-              if (statusRef.current === "calling" && peerIdRef.current) {
-                void logMissedCallRef.current(peerIdRef.current, videoRef.current);
-              }
-              toast(signal.kind === "reject" ? "応答がありませんでした" : "通話が終了しました");
-              cleanupRef.current();
-            }
-          }
+        (payload) => {
+          void handleSignalRef.current(payload.new as CallSignal);
         },
       )
       .subscribe();
@@ -285,18 +384,12 @@ export function CallProvider({ children }: { children: ReactNode }) {
     };
   }, [user]);
 
-  const statusRef = useRef(status);
-  const videoRef = useRef(video);
-  useEffect(() => {
-    statusRef.current = status;
-    videoRef.current = video;
-  }, [status, video]);
-
-  // ログイン中の最初のタップ/クリックで通知許可をリクエスト
+  // ログイン中の最初のタップ/クリックで通知許可と着信音の準備をする
   useEffect(() => {
     if (!user) return;
     const ask = () => {
       void requestNotificationPermission();
+      primeAudio();
       window.removeEventListener("pointerdown", ask);
     };
     window.addEventListener("pointerdown", ask);
