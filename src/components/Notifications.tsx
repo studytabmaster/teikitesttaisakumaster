@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import {
+  primeAudio,
   requestNotificationPermission,
   showIncomingCallNotification,
   showMessageNotification,
@@ -29,6 +30,7 @@ export function Notifications() {
     if (!user) return;
     const ask = () => {
       void requestNotificationPermission();
+      primeAudio();
       window.removeEventListener("pointerdown", ask);
     };
     window.addEventListener("pointerdown", ask);
