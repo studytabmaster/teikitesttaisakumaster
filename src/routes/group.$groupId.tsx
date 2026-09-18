@@ -203,12 +203,20 @@ function GroupChatPage() {
       toast("オフラインのため、つながったら送信します");
       return;
     }
-    const { error } = await supabase
+    const { data: inserted, error } = await supabase
       .from("group_messages")
-      .insert({ group_id: groupId, sender_id: user.id, content: clean, reply_to_id: parentId });
+      .insert({ group_id: groupId, sender_id: user.id, content: clean, reply_to_id: parentId })
+      .select("*")
+      .maybeSingle();
     if (error) {
       enqueueMessage({ kind: "group", senderId: user.id, targetId: groupId, content: clean });
       toast("送信できなかったので、送信待ちに入れました");
+      return;
+    }
+    // 自分の画面にはすぐ表示する
+    if (inserted) {
+      const m = inserted as GroupMessage;
+      setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
     }
   };
 
