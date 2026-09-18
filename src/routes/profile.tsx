@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Copy, LogOut, ShieldAlert } from "lucide-react";
+import { Copy, ImagePlus, LogOut, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { initials } from "@/lib/rine";
+import { makeAvatarDataUrl } from "@/lib/compress";
 
 export const Route = createFileRoute("/profile")({
   head: () => ({
@@ -35,6 +36,31 @@ function ProfilePage() {
   const [avatarUrl, setAvatarUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [isStaff, setIsStaff] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const pickAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("画像ファイルを選んでください");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error("画像は10MBまでです");
+      return;
+    }
+    setBusy(true);
+    try {
+      const dataUrl = await makeAvatarDataUrl(file);
+      setAvatarUrl(dataUrl);
+      toast.success("アイコンを読み込みました。保存してください");
+    } catch {
+      toast.error("この画像は読み込めませんでした");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   useEffect(() => {
     if (!user) return;
@@ -133,12 +159,38 @@ function ProfilePage() {
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="avatar">アイコン画像のURL</Label>
+            <Label>アイコン画像</Label>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/png,image/jpeg,image/jpg,image/gif,image/webp,image/bmp,image/heic,image/*"
+              hidden
+              onChange={pickAvatar}
+            />
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => fileRef.current?.click()}
+                disabled={busy}
+              >
+                <ImagePlus className="mr-1 size-4" />
+                ファイルから選ぶ
+              </Button>
+              {avatarUrl && (
+                <Button variant="ghost" onClick={() => setAvatarUrl("")} disabled={busy}>
+                  削除
+                </Button>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              PNG / JPG / JPEG / GIF / WEBP に対応。正方形に切り抜いて自動で軽くします。
+            </p>
             <Input
               id="avatar"
-              value={avatarUrl}
+              value={avatarUrl.startsWith("data:") ? "" : avatarUrl}
               onChange={(e) => setAvatarUrl(e.target.value)}
-              placeholder="https://..."
+              placeholder="画像のURLを直接入力もできます"
             />
           </div>
           <Button variant="brand" size="pill" className="w-full" onClick={save} disabled={busy}>
