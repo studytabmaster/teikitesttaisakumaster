@@ -35,6 +35,31 @@ function ProfilePage() {
   const [avatarUrl, setAvatarUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [isStaff, setIsStaff] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const pickAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("画像ファイルを選んでください");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error("画像は10MBまでです");
+      return;
+    }
+    setBusy(true);
+    try {
+      const dataUrl = await makeAvatarDataUrl(file);
+      setAvatarUrl(dataUrl);
+      toast.success("アイコンを読み込みました。保存してください");
+    } catch {
+      toast.error("この画像は読み込めませんでした");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   useEffect(() => {
     if (!user) return;
