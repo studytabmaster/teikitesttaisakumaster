@@ -216,21 +216,32 @@ function ChatPage() {
       toast("オフラインのため、つながったら送信します");
       return;
     }
-    const { data: inserted, error } = await supabase
-      .from("messages")
-      .insert({ sender_id: user.id, receiver_id: friendId, content: clean, reply_to_id: parentId })
-      .select("*")
-      .maybeSingle();
+    // 先に自分の画面へ表示し、相手へも即配信する（DBの応答を待たない）
+    const optimistic: Message = {
+      id: crypto.randomUUID(),
+      sender_id: user.id,
+      receiver_id: friendId,
+      content: clean,
+      image_url: null,
+      media_type: null,
+      read_at: null,
+      created_at: new Date().toISOString(),
+      reply_to_id: parentId,
+    };
+    setMessages((prev) => [...prev, optimistic]);
+    broadcastMessage(optimistic);
+    // 保存は裏で行う。失敗したら送信待ちへ
+    const { error } = await supabase.from("messages").insert({
+      id: optimistic.id,
+      sender_id: user.id,
+      receiver_id: friendId,
+      content: clean,
+      reply_to_id: parentId,
+    });
     if (error) {
+      setMessages((prev) => prev.filter((x) => x.id !== optimistic.id));
       enqueueMessage({ kind: "direct", senderId: user.id, targetId: friendId, content: clean });
       toast("送信できなかったので、送信待ちに入れました");
-      return;
-    }
-    // 自分の画面にはすぐ表示する（リアルタイム通知を待たない）
-    if (inserted) {
-      const m = inserted as Message;
-      setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
-      broadcastMessage(m);
     }
   };
 
@@ -268,28 +279,38 @@ function ChatPage() {
     }
     const parentId = replyTo?.id ?? null;
     setReplyTo(null);
-    const { data: inserted, error } = await supabase
+    const optimistic: Message = {
+      id: crypto.randomUUID(),
+      sender_id: user.id,
+      receiver_id: friendId,
+      content: "",
+      image_url: path,
+      media_type: isVideo ? "video" : "image",
+      read_at: null,
+      created_at: new Date().toISOString(),
+      reply_to_id: parentId,
+    };
+    setUploading(false);
+    // 即表示・即配信し、保存は裏で行う
+    setMessages((prev) => [...prev, optimistic]);
+    broadcastMessage(optimistic);
+    void supabase
       .from("messages")
       .insert({
+        id: optimistic.id,
         sender_id: user.id,
         receiver_id: friendId,
         content: "",
         image_url: path,
-        media_type: isVideo ? "video" : "image",
+        media_type: optimistic.media_type,
         reply_to_id: parentId,
       })
-      .select("*")
-      .maybeSingle();
-    setUploading(false);
-    if (error) {
-      toast.error("送信できませんでした");
-      return;
-    }
-    if (inserted) {
-      const m = inserted as Message;
-      setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
-      broadcastMessage(m);
-    }
+      .then(({ error }) => {
+        if (error) {
+          setMessages((prev) => prev.filter((x) => x.id !== optimistic.id));
+          toast.error("送信できませんでした");
+        }
+      });
   };
 
   const unsend = async (m: Message) => {
