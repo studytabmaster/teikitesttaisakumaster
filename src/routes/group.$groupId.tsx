@@ -72,6 +72,12 @@ function GroupChatPage() {
   const [uploading, setUploading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const liveRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+
+  // 送った内容をメンバーの画面へ即座に届ける（DB 反映を待たない）
+  const broadcastMessage = (m: GroupMessage) => {
+    void liveRef.current?.send({ type: "broadcast", event: "msg", payload: m });
+  };
   const [reads, setReads] = useState<GroupRead[]>([]);
   const [replyTo, setReplyTo] = useState<GroupMessage | null>(null);
   const [highlightId, setHighlightId] = useState<string | null>(null);
@@ -127,8 +133,19 @@ function GroupChatPage() {
     };
     void loadReads();
 
+    // グループ全員が同じチャンネルに入り、送信直後に直接配信する
     const channel = supabase
-      .channel(`group-${groupId}-${crypto.randomUUID()}`)
+      .channel(`group-${groupId}`, { config: { broadcast: { self: false } } })
+      .on("broadcast", { event: "msg" }, ({ payload }) => {
+        const m = payload as GroupMessage;
+        setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
+      })
+      .on("broadcast", { event: "del" }, ({ payload }) => {
+        const id = (payload as { id?: string })?.id;
+        if (!id) return;
+        setMessages((prev) => prev.filter((x) => x.id !== id));
+      })
+      // 念のための保険（DB経由の通知）
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "group_messages", filter: `group_id=eq.${groupId}` },
@@ -154,9 +171,11 @@ function GroupChatPage() {
         },
       )
       .subscribe();
+    liveRef.current = channel;
 
     return () => {
       cancelled = true;
+      liveRef.current = null;
       void supabase.removeChannel(channel);
     };
   }, [user, groupId, loadMembers]);
@@ -203,20 +222,27 @@ function GroupChatPage() {
       toast("オフラインのため、つながったら送信します");
       return;
     }
-    const { data: inserted, error } = await supabase
+    // 先に自分の画面へ表示し、メンバーへも即配信する（DBの応答を待たない）
+    const optimistic: GroupMessage = {
+      id: crypto.randomUUID(),
+      group_id: groupId,
+      sender_id: user.id,
+      content: clean,
+      image_url: null,
+      media_type: null,
+      created_at: new Date().toISOString(),
+      reply_to_id: parentId,
+    };
+    setMessages((prev) => [...prev, optimistic]);
+    broadcastMessage(optimistic);
+    // 保存は裏で行う。失敗したら送信待ちへ
+    const { error } = await supabase
       .from("group_messages")
-      .insert({ group_id: groupId, sender_id: user.id, content: clean, reply_to_id: parentId })
-      .select("*")
-      .maybeSingle();
+      .insert({ id: optimistic.id, group_id: groupId, sender_id: user.id, content: clean, reply_to_id: parentId });
     if (error) {
+      setMessages((prev) => prev.filter((x) => x.id !== optimistic.id));
       enqueueMessage({ kind: "group", senderId: user.id, targetId: groupId, content: clean });
       toast("送信できなかったので、送信待ちに入れました");
-      return;
-    }
-    // 自分の画面にはすぐ表示する
-    if (inserted) {
-      const m = inserted as GroupMessage;
-      setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
     }
   };
 
@@ -248,15 +274,35 @@ function GroupChatPage() {
       toast.error("アップロードできませんでした");
       return;
     }
-    const { error } = await supabase.from("group_messages").insert({
+    setUploading(false);
+    // 即表示・即配信し、保存は裏で行う
+    const optimistic: GroupMessage = {
+      id: crypto.randomUUID(),
       group_id: groupId,
       sender_id: user.id,
       content: "",
       image_url: path,
       media_type: isVideo ? "video" : "image",
-    });
-    setUploading(false);
-    if (error) toast.error("送信できませんでした");
+      created_at: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, optimistic]);
+    broadcastMessage(optimistic);
+    void supabase
+      .from("group_messages")
+      .insert({
+        id: optimistic.id,
+        group_id: groupId,
+        sender_id: user.id,
+        content: "",
+        image_url: path,
+        media_type: isVideo ? "video" : "image",
+      })
+      .then(({ error }) => {
+        if (error) {
+          setMessages((prev) => prev.filter((x) => x.id !== optimistic.id));
+          toast.error("送信できませんでした");
+        }
+      });
   };
 
   const unsend = async (m: GroupMessage) => {
@@ -278,6 +324,7 @@ function GroupChatPage() {
     setMessages((prev) =>
       prev.filter((x) => x.id !== m.id).map((x) => (x.reply_to_id === m.id ? { ...x, reply_to_id: null } : x)),
     );
+    void liveRef.current?.send({ type: "broadcast", event: "del", payload: { id: m.id } });
     toast.success("完全に削除しました");
   };
 
