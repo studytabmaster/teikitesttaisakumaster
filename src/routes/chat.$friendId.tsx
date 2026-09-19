@@ -302,7 +302,7 @@ function ChatPage() {
         receiver_id: friendId,
         content: "",
         image_url: path,
-        media_type: optimistic.media_type,
+        media_type: isVideo ? "video" : "image",
         reply_to_id: parentId,
       })
       .then(({ error }) => {
