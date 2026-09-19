@@ -127,8 +127,19 @@ function GroupChatPage() {
     };
     void loadReads();
 
+    // グループ全員が同じチャンネルに入り、送信直後に直接配信する
     const channel = supabase
-      .channel(`group-${groupId}-${crypto.randomUUID()}`)
+      .channel(`group-${groupId}`, { config: { broadcast: { self: false } } })
+      .on("broadcast", { event: "msg" }, ({ payload }) => {
+        const m = payload as GroupMessage;
+        setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
+      })
+      .on("broadcast", { event: "del" }, ({ payload }) => {
+        const id = (payload as { id?: string })?.id;
+        if (!id) return;
+        setMessages((prev) => prev.filter((x) => x.id !== id));
+      })
+      // 念のための保険（DB経由の通知）
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "group_messages", filter: `group_id=eq.${groupId}` },
