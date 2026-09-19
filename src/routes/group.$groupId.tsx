@@ -171,9 +171,11 @@ function GroupChatPage() {
         },
       )
       .subscribe();
+    liveRef.current = channel;
 
     return () => {
       cancelled = true;
+      liveRef.current = null;
       void supabase.removeChannel(channel);
     };
   }, [user, groupId, loadMembers]);
@@ -220,20 +222,27 @@ function GroupChatPage() {
       toast("オフラインのため、つながったら送信します");
       return;
     }
-    const { data: inserted, error } = await supabase
+    // 先に自分の画面へ表示し、メンバーへも即配信する（DBの応答を待たない）
+    const optimistic: GroupMessage = {
+      id: crypto.randomUUID(),
+      group_id: groupId,
+      sender_id: user.id,
+      content: clean,
+      image_url: null,
+      media_type: null,
+      created_at: new Date().toISOString(),
+      reply_to_id: parentId,
+    };
+    setMessages((prev) => [...prev, optimistic]);
+    broadcastMessage(optimistic);
+    // 保存は裏で行う。失敗したら送信待ちへ
+    const { error } = await supabase
       .from("group_messages")
-      .insert({ group_id: groupId, sender_id: user.id, content: clean, reply_to_id: parentId })
-      .select("*")
-      .maybeSingle();
+      .insert({ id: optimistic.id, group_id: groupId, sender_id: user.id, content: clean, reply_to_id: parentId });
     if (error) {
+      setMessages((prev) => prev.filter((x) => x.id !== optimistic.id));
       enqueueMessage({ kind: "group", senderId: user.id, targetId: groupId, content: clean });
       toast("送信できなかったので、送信待ちに入れました");
-      return;
-    }
-    // 自分の画面にはすぐ表示する
-    if (inserted) {
-      const m = inserted as GroupMessage;
-      setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
     }
   };
 
@@ -265,15 +274,35 @@ function GroupChatPage() {
       toast.error("アップロードできませんでした");
       return;
     }
-    const { error } = await supabase.from("group_messages").insert({
+    setUploading(false);
+    // 即表示・即配信し、保存は裏で行う
+    const optimistic: GroupMessage = {
+      id: crypto.randomUUID(),
       group_id: groupId,
       sender_id: user.id,
       content: "",
       image_url: path,
       media_type: isVideo ? "video" : "image",
-    });
-    setUploading(false);
-    if (error) toast.error("送信できませんでした");
+      created_at: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, optimistic]);
+    broadcastMessage(optimistic);
+    void supabase
+      .from("group_messages")
+      .insert({
+        id: optimistic.id,
+        group_id: groupId,
+        sender_id: user.id,
+        content: "",
+        image_url: path,
+        media_type: isVideo ? "video" : "image",
+      })
+      .then(({ error }) => {
+        if (error) {
+          setMessages((prev) => prev.filter((x) => x.id !== optimistic.id));
+          toast.error("送信できませんでした");
+        }
+      });
   };
 
   const unsend = async (m: GroupMessage) => {
