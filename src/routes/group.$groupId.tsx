@@ -324,6 +324,7 @@ function GroupChatPage() {
     setMessages((prev) =>
       prev.filter((x) => x.id !== m.id).map((x) => (x.reply_to_id === m.id ? { ...x, reply_to_id: null } : x)),
     );
+    void liveRef.current?.send({ type: "broadcast", event: "del", payload: { id: m.id } });
     toast.success("完全に削除しました");
   };
 
