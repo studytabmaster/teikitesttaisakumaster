@@ -44,17 +44,44 @@ function isH3SwallowedErrorBody(body: string): boolean {
   }
 }
 
+// 他サイトの iframe 内に埋め込んでも表示できるようにする。
+// （X-Frame-Options を外し、CSP の frame-ancestors で全許可）
+function allowEmbedding(response: Response): Response {
+  const headers = new Headers(response.headers);
+  headers.delete("X-Frame-Options");
+  headers.delete("x-frame-options");
+  const csp = headers.get("Content-Security-Policy");
+  if (csp) {
+    headers.set(
+      "Content-Security-Policy",
+      /frame-ancestors/i.test(csp)
+        ? csp.replace(/frame-ancestors[^;]*/i, "frame-ancestors *")
+        : `${csp.replace(/;\s*$/, "")}; frame-ancestors *`,
+    );
+  } else {
+    headers.set("Content-Security-Policy", "frame-ancestors *");
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     try {
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
-      return await normalizeCatastrophicSsrResponse(response);
+      return allowEmbedding(await normalizeCatastrophicSsrResponse(response));
     } catch (error) {
       console.error(error);
       return new Response(renderErrorPage(), {
         status: 500,
-        headers: { "content-type": "text/html; charset=utf-8" },
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+          "Content-Security-Policy": "frame-ancestors *",
+        },
       });
     }
   },
