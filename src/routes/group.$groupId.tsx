@@ -72,6 +72,12 @@ function GroupChatPage() {
   const [uploading, setUploading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const liveRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+
+  // 送った内容をメンバーの画面へ即座に届ける（DB 反映を待たない）
+  const broadcastMessage = (m: GroupMessage) => {
+    void liveRef.current?.send({ type: "broadcast", event: "msg", payload: m });
+  };
   const [reads, setReads] = useState<GroupRead[]>([]);
   const [replyTo, setReplyTo] = useState<GroupMessage | null>(null);
   const [highlightId, setHighlightId] = useState<string | null>(null);
