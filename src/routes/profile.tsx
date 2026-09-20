@@ -198,6 +198,13 @@ function ProfilePage() {
           </Button>
         </div>
 
+        <Button asChild variant="outline" className="w-full">
+          <Link to="/qa">
+            <CircleHelp className="mr-1 size-4" />
+            Q&A（よくある質問）
+          </Link>
+        </Button>
+
         {isStaff && (
           <Button asChild variant="outline" className="w-full">
             <Link to="/admin">
