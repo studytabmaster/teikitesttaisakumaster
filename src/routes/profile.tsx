@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Copy, ImagePlus, LogOut, ShieldAlert } from "lucide-react";
+import { CircleHelp, Copy, ImagePlus, LogOut, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -197,6 +197,13 @@ function ProfilePage() {
             保存する
           </Button>
         </div>
+
+        <Button asChild variant="outline" className="w-full">
+          <Link to="/qa">
+            <CircleHelp className="mr-1 size-4" />
+            Q&A（よくある質問）
+          </Link>
+        </Button>
 
         {isStaff && (
           <Button asChild variant="outline" className="w-full">

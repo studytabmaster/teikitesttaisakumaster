@@ -16,6 +16,7 @@ import { Route as FriendsRouteImport } from './routes/friends'
 import { Route as GroupsRouteImport } from './routes/groups'
 import { Route as OpenRouteImport } from './routes/open'
 import { Route as ProfileRouteImport } from './routes/profile'
+import { Route as QaRouteImport } from './routes/qa'
 import { Route as ChatFriendIdRouteImport } from './routes/chat.$friendId'
 import { Route as FriendFriendIdRouteImport } from './routes/friend.$friendId'
 import { Route as GroupGroupIdRouteImport } from './routes/group.$groupId'
@@ -55,6 +56,11 @@ const ProfileRoute = ProfileRouteImport.update({
   path: '/profile',
   getParentRoute: () => rootRouteImport,
 } as any)
+const QaRoute = QaRouteImport.update({
+  id: '/qa',
+  path: '/qa',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ChatFriendIdRoute = ChatFriendIdRouteImport.update({
   id: '/chat/$friendId',
   path: '/chat/$friendId',
@@ -79,6 +85,7 @@ export interface FileRoutesByFullPath {
   '/groups': typeof GroupsRoute
   '/open': typeof OpenRoute
   '/profile': typeof ProfileRoute
+  '/qa': typeof QaRoute
   '/chat/$friendId': typeof ChatFriendIdRoute
   '/friend/$friendId': typeof FriendFriendIdRoute
   '/group/$groupId': typeof GroupGroupIdRoute
@@ -91,6 +98,7 @@ export interface FileRoutesByTo {
   '/groups': typeof GroupsRoute
   '/open': typeof OpenRoute
   '/profile': typeof ProfileRoute
+  '/qa': typeof QaRoute
   '/chat/$friendId': typeof ChatFriendIdRoute
   '/friend/$friendId': typeof FriendFriendIdRoute
   '/group/$groupId': typeof GroupGroupIdRoute
@@ -104,6 +112,7 @@ export interface FileRoutesById {
   '/groups': typeof GroupsRoute
   '/open': typeof OpenRoute
   '/profile': typeof ProfileRoute
+  '/qa': typeof QaRoute
   '/chat/$friendId': typeof ChatFriendIdRoute
   '/friend/$friendId': typeof FriendFriendIdRoute
   '/group/$groupId': typeof GroupGroupIdRoute
@@ -118,6 +127,7 @@ export interface FileRouteTypes {
     | '/groups'
     | '/open'
     | '/profile'
+    | '/qa'
     | '/chat/$friendId'
     | '/friend/$friendId'
     | '/group/$groupId'
@@ -130,6 +140,7 @@ export interface FileRouteTypes {
     | '/groups'
     | '/open'
     | '/profile'
+    | '/qa'
     | '/chat/$friendId'
     | '/friend/$friendId'
     | '/group/$groupId'
@@ -142,6 +153,7 @@ export interface FileRouteTypes {
     | '/groups'
     | '/open'
     | '/profile'
+    | '/qa'
     | '/chat/$friendId'
     | '/friend/$friendId'
     | '/group/$groupId'
@@ -155,6 +167,7 @@ export interface RootRouteChildren {
   GroupsRoute: typeof GroupsRoute
   OpenRoute: typeof OpenRoute
   ProfileRoute: typeof ProfileRoute
+  QaRoute: typeof QaRoute
   ChatFriendIdRoute: typeof ChatFriendIdRoute
   FriendFriendIdRoute: typeof FriendFriendIdRoute
   GroupGroupIdRoute: typeof GroupGroupIdRoute
@@ -211,6 +224,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProfileRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/qa': {
+      id: '/qa'
+      path: '/qa'
+      fullPath: '/qa'
+      preLoaderRoute: typeof QaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/chat/$friendId': {
       id: '/chat/$friendId'
       path: '/chat/$friendId'
@@ -243,6 +263,7 @@ const rootRouteChildren: RootRouteChildren = {
   GroupsRoute: GroupsRoute,
   OpenRoute: OpenRoute,
   ProfileRoute: ProfileRoute,
+  QaRoute: QaRoute,
   ChatFriendIdRoute: ChatFriendIdRoute,
   FriendFriendIdRoute: FriendFriendIdRoute,
   GroupGroupIdRoute: GroupGroupIdRoute,
