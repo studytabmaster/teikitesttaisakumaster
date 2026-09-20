@@ -163,7 +163,7 @@ function ProfilePage() {
             <input
               ref={fileRef}
               type="file"
-              accept="image/png,image/jpeg,image/jpg,image/gif,image/webp,image/bmp,image/heic,image/*"
+              accept="image/png,image/jpeg,image/jpg,image/gif,image/webp,image/bmp,image/heic,image/heif,image/avif,image/svg+xml,image/tiff,image/x-icon,image/vnd.microsoft.icon,image/*"
               hidden
               onChange={pickAvatar}
             />
@@ -184,7 +184,7 @@ function ProfilePage() {
               )}
             </div>
             <p className="text-xs text-muted-foreground">
-              PNG / JPG / JPEG / GIF / WEBP に対応。正方形に切り抜いて自動で軽くします。
+              PNG / JPG / JPEG / GIF / WEBP / BMP / HEIC / AVIF / SVG / TIFF など、ブラウザが読める画像はすべて対応。正方形に切り抜いて自動で軽くします。
             </p>
             <Input
               id="avatar"
