@@ -198,6 +198,15 @@ function ProfilePage() {
           </Button>
         </div>
 
+        <div className="grid grid-cols-2 gap-2">
+          <Button asChild variant="outline" className="w-full">
+            <Link to="/terms">利用規約</Link>
+          </Button>
+          <Button asChild variant="outline" className="w-full">
+            <Link to="/privacy">プライバシーポリシー</Link>
+          </Button>
+        </div>
+
         <Button asChild variant="outline" className="w-full">
           <Link to="/qa">
             <CircleHelp className="mr-1 size-4" />
