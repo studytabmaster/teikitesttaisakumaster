@@ -411,6 +411,30 @@ export type Database = {
           },
         ]
       }
+      user_bans: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          reason: string
+          until: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          reason?: string
+          until?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          reason?: string
+          until?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       user_roles: {
         Row: {
           created_at: string
@@ -469,6 +493,7 @@ export type Database = {
         }
         Returns: boolean
       }
+      is_banned: { Args: { _user_id: string }; Returns: boolean }
       is_blocked_pair: { Args: { _a: string; _b: string }; Returns: boolean }
       is_group_member: {
         Args: { _group_id: string; _user_id: string }
