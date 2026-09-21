@@ -57,6 +57,13 @@
       "when": 1789729671402,
       "tag": "0007_ensure_realtime_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789983835296,
+      "tag": "0008_admin_bans_and_moderation",
+      "breakpoints": true
     }
   ]
 }
