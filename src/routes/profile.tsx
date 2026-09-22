@@ -86,8 +86,8 @@ function ProfilePage() {
     const { error } = await supabase
       .from("profiles")
       .update({
-        display_name: displayName.trim() || "ユーザー",
-        status_message: statusMessage,
+        display_name: maskProfanity(displayName.trim()) || "ユーザー",
+        status_message: maskProfanity(statusMessage),
         avatar_url: avatarUrl.trim() || null,
       })
       .eq("id", user.id);
