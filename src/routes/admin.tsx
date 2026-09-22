@@ -14,12 +14,17 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { formatListTime, initials, type Profile } from "@/lib/rine";
 import {
+  adminClearGroupMessages,
+  adminDeleteGroup,
   adminDeleteUserMessages,
+  adminListGroups,
   adminListUsers,
   adminSetBan,
+  adminSetGroupOpen,
   adminSetRole,
   adminStats,
   unlockAdmin,
+  type AdminGroup,
   type AdminUser,
 } from "@/lib/admin.functions";
 
