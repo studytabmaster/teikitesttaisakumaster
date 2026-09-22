@@ -80,6 +80,9 @@ function AdminPage() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [query, setQuery] = useState("");
   const [stats, setStats] = useState<Awaited<ReturnType<typeof adminStats>> | null>(null);
+  const [groups, setGroups] = useState<AdminGroup[]>([]);
+  const [groupQuery, setGroupQuery] = useState("");
+  const [openOnly, setOpenOnly] = useState(true);
 
   const unlock = useServerFn(unlockAdmin);
   const listUsers = useServerFn(adminListUsers);
@@ -87,6 +90,10 @@ function AdminPage() {
   const setBan = useServerFn(adminSetBan);
   const wipeMessages = useServerFn(adminDeleteUserMessages);
   const loadStats = useServerFn(adminStats);
+  const listGroups = useServerFn(adminListGroups);
+  const removeGroup = useServerFn(adminDeleteGroup);
+  const setGroupOpen = useServerFn(adminSetGroupOpen);
+  const clearGroupMessages = useServerFn(adminClearGroupMessages);
 
   const loadReports = useCallback(async () => {
     const { data } = await supabase
