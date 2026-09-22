@@ -42,17 +42,42 @@ const LEET: Record<string, string> = {
 };
 
 // 記号・空白・ゼロ幅など、判定時に無視する文字
-const IGNORE = /[\s\u200B-\u200F\u202A-\u202E\u2060\uFEFF.,、。!?！？~〜・:;"'`^*_\-+=()（）[\]{}<>《》「」『』/\\|#%&@]/;
+const IGNORE =
+  /[\s\u200B-\u200F\u202A-\u202E\u2060\uFEFF\u309B\u309C\u30FB\uFF65\uFF9E\uFF9F.,、。!?！？~〜ー・:;"'`^*_\-+=()（）[\]{}<>《》「」『』/\\|#%&@°º•·¥￥]/;
+
+// 小書き仮名を通常の仮名にそろえる（「し ぬ」「しぬぅ」などの回避対策）
+const KANA_FOLD: Record<string, string> = {
+  ぁ: "あ", ぃ: "い", ぅ: "う", ぇ: "え", ぉ: "お",
+  ゃ: "や", ゅ: "ゆ", ょ: "よ", ゎ: "わ", ゕ: "か", ゖ: "け",
+};
+
+// 見た目が似ている外国語文字（キリル文字など）を英字にそろえる
+const LOOKALIKE: Record<string, string> = {
+  а: "a", в: "b", с: "c", е: "e", н: "h", к: "k", м: "m",
+  о: "o", р: "p", т: "t", х: "x", у: "y", і: "i", ѕ: "s", ј: "j",
+  α: "a", ο: "o", ρ: "p", ε: "e", ι: "i", κ: "k", ν: "v", τ: "t",
+};
 
 function normalizeChar(ch: string): string {
-  let c = ch.toLowerCase();
+  // 装飾文字（𝐟𝐮𝐜𝐤 のような数学英字）や半角カナを通常の文字へ戻す
+  let c = ch.normalize("NFKC");
+  if (!c) return "";
+  c = c.toLowerCase();
   // 全角英数 → 半角
-  c = c.replace(/[Ａ-Ｚａ-ｚ０-９]/g, (m) => String.fromCharCode(m.charCodeAt(0) - 0xfee0)).toLowerCase();
+  c = c
+    .replace(/[Ａ-Ｚａ-ｚ０-９]/g, (m) => String.fromCharCode(m.charCodeAt(0) - 0xfee0))
+    .toLowerCase();
+  const look = LOOKALIKE[c];
+  if (look) c = look;
   const leet = LEET[c];
   if (leet) c = leet;
+  // 半角カタカナ → 全角カタカナ
+  c = c.normalize("NFKC");
   // カタカナ → ひらがな
   c = c.replace(/[\u30A1-\u30F6]/g, (m) => String.fromCharCode(m.charCodeAt(0) - 0x60));
-  if (IGNORE.test(c)) return "";
+  const fold = KANA_FOLD[c];
+  if (fold) c = fold;
+  if (!c || IGNORE.test(c)) return "";
   return c;
 }
 

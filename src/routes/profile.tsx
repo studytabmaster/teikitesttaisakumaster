@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { initials } from "@/lib/rine";
 import { makeAvatarDataUrl } from "@/lib/compress";
+import { maskProfanity } from "@/lib/profanity";
 
 export const Route = createFileRoute("/profile")({
   head: () => ({
@@ -86,8 +87,8 @@ function ProfilePage() {
     const { error } = await supabase
       .from("profiles")
       .update({
-        display_name: displayName.trim() || "ユーザー",
-        status_message: statusMessage,
+        display_name: maskProfanity(displayName.trim()) || "ユーザー",
+        status_message: maskProfanity(statusMessage),
         avatar_url: avatarUrl.trim() || null,
       })
       .eq("id", user.id);

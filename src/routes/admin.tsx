@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { Ban, KeyRound, RefreshCw, Search, ShieldCheck, Trash2 } from "lucide-react";
+import { Ban, EyeOff, KeyRound, RefreshCw, Search, ShieldCheck, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -14,12 +14,17 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { formatListTime, initials, type Profile } from "@/lib/rine";
 import {
+  adminClearGroupMessages,
+  adminDeleteGroup,
   adminDeleteUserMessages,
+  adminListGroups,
   adminListUsers,
   adminSetBan,
+  adminSetGroupOpen,
   adminSetRole,
   adminStats,
   unlockAdmin,
+  type AdminGroup,
   type AdminUser,
 } from "@/lib/admin.functions";
 
@@ -75,6 +80,9 @@ function AdminPage() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [query, setQuery] = useState("");
   const [stats, setStats] = useState<Awaited<ReturnType<typeof adminStats>> | null>(null);
+  const [groups, setGroups] = useState<AdminGroup[]>([]);
+  const [groupQuery, setGroupQuery] = useState("");
+  const [openOnly, setOpenOnly] = useState(true);
 
   const unlock = useServerFn(unlockAdmin);
   const listUsers = useServerFn(adminListUsers);
@@ -82,6 +90,10 @@ function AdminPage() {
   const setBan = useServerFn(adminSetBan);
   const wipeMessages = useServerFn(adminDeleteUserMessages);
   const loadStats = useServerFn(adminStats);
+  const listGroups = useServerFn(adminListGroups);
+  const removeGroup = useServerFn(adminDeleteGroup);
+  const setGroupOpen = useServerFn(adminSetGroupOpen);
+  const clearGroupMessages = useServerFn(adminClearGroupMessages);
 
   const loadReports = useCallback(async () => {
     const { data } = await supabase
@@ -110,13 +122,25 @@ function AdminPage() {
     [listUsers],
   );
 
+  const loadGroups = useCallback(
+    async (q: string, onlyOpen: boolean) => {
+      try {
+        setGroups(await listGroups({ data: { q, openOnly: onlyOpen } }));
+      } catch (e) {
+        toast.error(errorMessage(e));
+      }
+    },
+    [listGroups],
+  );
+
   const loadAll = useCallback(async () => {
     await Promise.all([
       loadReports(),
       loadUsers(""),
+      loadGroups("", true),
       loadStats({}).then(setStats).catch(() => {}),
     ]);
-  }, [loadReports, loadUsers, loadStats]);
+  }, [loadReports, loadUsers, loadGroups, loadStats]);
 
   useEffect(() => {
     if (!user) return;
@@ -191,6 +215,38 @@ function AdminPage() {
     }
   };
 
+  const deleteGroup = async (g: AdminGroup) => {
+    if (!confirm(`ルーム「${g.name}」を削除しますか？投稿もすべて消えます（元に戻せません）`)) return;
+    try {
+      await removeGroup({ data: { groupId: g.id } });
+      toast.success("ルームを削除しました");
+      await loadGroups(groupQuery, openOnly);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    }
+  };
+
+  const hideGroup = async (g: AdminGroup) => {
+    try {
+      await setGroupOpen({ data: { groupId: g.id, isOpen: !g.is_open } });
+      toast.success(g.is_open ? "非公開にしました" : "公開しました");
+      await loadGroups(groupQuery, openOnly);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    }
+  };
+
+  const clearGroup = async (g: AdminGroup) => {
+    if (!confirm(`ルーム「${g.name}」の投稿をすべて削除しますか？`)) return;
+    try {
+      await clearGroupMessages({ data: { groupId: g.id } });
+      toast.success("投稿を削除しました");
+      await loadGroups(groupQuery, openOnly);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    }
+  };
+
   const deleteMessages = async (u: AdminUser) => {
     if (!confirm(`${u.display_name} さんの投稿をすべて削除しますか？（元に戻せません）`)) return;
     try {
@@ -254,10 +310,11 @@ function AdminPage() {
       }
     >
       <Tabs defaultValue="dashboard" className="w-full">
-        <TabsList className="mx-5 mt-4 grid w-[calc(100%-2.5rem)] grid-cols-3">
+        <TabsList className="mx-5 mt-4 grid w-[calc(100%-2.5rem)] grid-cols-4">
           <TabsTrigger value="dashboard">概要</TabsTrigger>
           <TabsTrigger value="reports">通報</TabsTrigger>
           <TabsTrigger value="users">ユーザー</TabsTrigger>
+          <TabsTrigger value="rooms">ルーム</TabsTrigger>
         </TabsList>
 
         <TabsContent value="dashboard" className="px-5 py-4">
@@ -268,6 +325,7 @@ function AdminPage() {
               {[
                 { label: "ユーザー数", value: stats.users },
                 { label: "グループ数", value: stats.groups },
+                { label: "公開ルーム", value: stats.openGroups },
                 { label: "総メッセージ", value: stats.messages },
                 { label: "24時間の投稿", value: stats.todayMessages },
                 { label: "未対応の通報", value: stats.openReports },
@@ -432,6 +490,83 @@ function AdminPage() {
                   <Button size="sm" variant="ghost" className="text-destructive" onClick={() => void deleteMessages(u)}>
                     <Trash2 className="mr-1 size-4" />
                     投稿を全削除
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </TabsContent>
+
+        <TabsContent value="rooms" className="space-y-3 px-5 py-4">
+          <div className="flex gap-2">
+            <Input
+              value={groupQuery}
+              onChange={(e) => setGroupQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void loadGroups(groupQuery, openOnly);
+              }}
+              placeholder="ルーム名・説明で検索"
+            />
+            <Button variant="outline" onClick={() => void loadGroups(groupQuery, openOnly)}>
+              <Search className="size-4" />
+            </Button>
+          </div>
+
+          <div className="flex gap-2">
+            {[
+              { label: "公開ルームのみ", only: true },
+              { label: "すべて", only: false },
+            ].map((f) => (
+              <Button
+                key={f.label}
+                size="sm"
+                variant={openOnly === f.only ? "default" : "outline"}
+                onClick={() => {
+                  setOpenOnly(f.only);
+                  void loadGroups(groupQuery, f.only);
+                }}
+              >
+                {f.label}
+              </Button>
+            ))}
+          </div>
+
+          {groups.length === 0 && (
+            <p className="py-10 text-center text-sm text-muted-foreground">
+              ルームが見つかりません。
+            </p>
+          )}
+
+          <ul className="divide-y divide-border">
+            {groups.map((g) => (
+              <li key={g.id} className="space-y-2 py-3">
+                <div className="min-w-0">
+                  <p className="truncate font-semibold">
+                    {g.name}
+                    <Badge variant={g.is_open ? "secondary" : "outline"} className="ml-2">
+                      {g.is_open ? "公開" : "非公開"}
+                    </Badge>
+                  </p>
+                  {g.description && (
+                    <p className="line-clamp-2 text-xs text-muted-foreground">{g.description}</p>
+                  )}
+                  <p className="text-[11px] text-muted-foreground">
+                    作成者: {g.owner_name}・{g.members}人・投稿{g.messages}件・
+                    {formatListTime(g.created_at)}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" onClick={() => void hideGroup(g)}>
+                    <EyeOff className="mr-1 size-4" />
+                    {g.is_open ? "非公開にする" : "公開する"}
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => void clearGroup(g)}>
+                    <Trash2 className="mr-1 size-4" />
+                    投稿を全削除
+                  </Button>
+                  <Button size="sm" variant="destructive" onClick={() => void deleteGroup(g)}>
+                    <Trash2 className="mr-1 size-4" />
+                    ルームを削除
                   </Button>
                 </div>
               </li>
