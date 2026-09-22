@@ -241,9 +241,10 @@ export const adminStats = createServerFn({ method: "POST" })
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-    const [users, groups, messages, todayMessages, openReports, bans] = await Promise.all([
+    const [users, groups, openGroups, messages, todayMessages, openReports, bans] = await Promise.all([
       supabaseAdmin.from("profiles").select("id", { count: "exact", head: true }),
       supabaseAdmin.from("groups").select("id", { count: "exact", head: true }),
+      supabaseAdmin.from("groups").select("id", { count: "exact", head: true }).eq("is_open", true),
       supabaseAdmin.from("messages").select("id", { count: "exact", head: true }),
       supabaseAdmin.from("messages").select("id", { count: "exact", head: true }).gte("created_at", since),
       supabaseAdmin.from("reports").select("id", { count: "exact", head: true }).eq("status", "open"),
@@ -253,6 +254,7 @@ export const adminStats = createServerFn({ method: "POST" })
     return {
       users: users.count ?? 0,
       groups: groups.count ?? 0,
+      openGroups: openGroups.count ?? 0,
       messages: messages.count ?? 0,
       todayMessages: todayMessages.count ?? 0,
       openReports: openReports.count ?? 0,
