@@ -310,10 +310,11 @@ function AdminPage() {
       }
     >
       <Tabs defaultValue="dashboard" className="w-full">
-        <TabsList className="mx-5 mt-4 grid w-[calc(100%-2.5rem)] grid-cols-3">
+        <TabsList className="mx-5 mt-4 grid w-[calc(100%-2.5rem)] grid-cols-4">
           <TabsTrigger value="dashboard">概要</TabsTrigger>
           <TabsTrigger value="reports">通報</TabsTrigger>
           <TabsTrigger value="users">ユーザー</TabsTrigger>
+          <TabsTrigger value="rooms">ルーム</TabsTrigger>
         </TabsList>
 
         <TabsContent value="dashboard" className="px-5 py-4">
