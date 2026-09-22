@@ -59,8 +59,8 @@ const LOOKALIKE: Record<string, string> = {
 };
 
 function normalizeChar(ch: string): string {
-  // 装飾文字（𝐟𝐮𝐜𝐤 のような数学英字）を通常の英数へ戻す
-  let c = ch.normalize("NFKD").replace(/[\u0300-\u036F]/g, "");
+  // 装飾文字（𝐟𝐮𝐜𝐤 のような数学英字）や半角カナを通常の文字へ戻す
+  let c = ch.normalize("NFKC");
   if (!c) return "";
   c = c.toLowerCase();
   // 全角英数 → 半角
