@@ -496,6 +496,83 @@ function AdminPage() {
             ))}
           </ul>
         </TabsContent>
+
+        <TabsContent value="rooms" className="space-y-3 px-5 py-4">
+          <div className="flex gap-2">
+            <Input
+              value={groupQuery}
+              onChange={(e) => setGroupQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void loadGroups(groupQuery, openOnly);
+              }}
+              placeholder="ルーム名・説明で検索"
+            />
+            <Button variant="outline" onClick={() => void loadGroups(groupQuery, openOnly)}>
+              <Search className="size-4" />
+            </Button>
+          </div>
+
+          <div className="flex gap-2">
+            {[
+              { label: "公開ルームのみ", only: true },
+              { label: "すべて", only: false },
+            ].map((f) => (
+              <Button
+                key={f.label}
+                size="sm"
+                variant={openOnly === f.only ? "default" : "outline"}
+                onClick={() => {
+                  setOpenOnly(f.only);
+                  void loadGroups(groupQuery, f.only);
+                }}
+              >
+                {f.label}
+              </Button>
+            ))}
+          </div>
+
+          {groups.length === 0 && (
+            <p className="py-10 text-center text-sm text-muted-foreground">
+              ルームが見つかりません。
+            </p>
+          )}
+
+          <ul className="divide-y divide-border">
+            {groups.map((g) => (
+              <li key={g.id} className="space-y-2 py-3">
+                <div className="min-w-0">
+                  <p className="truncate font-semibold">
+                    {g.name}
+                    <Badge variant={g.is_open ? "secondary" : "outline"} className="ml-2">
+                      {g.is_open ? "公開" : "非公開"}
+                    </Badge>
+                  </p>
+                  {g.description && (
+                    <p className="line-clamp-2 text-xs text-muted-foreground">{g.description}</p>
+                  )}
+                  <p className="text-[11px] text-muted-foreground">
+                    作成者: {g.owner_name}・{g.members}人・投稿{g.messages}件・
+                    {formatListTime(g.created_at)}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" onClick={() => void hideGroup(g)}>
+                    <EyeOff className="mr-1 size-4" />
+                    {g.is_open ? "非公開にする" : "公開する"}
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => void clearGroup(g)}>
+                    <Trash2 className="mr-1 size-4" />
+                    投稿を全削除
+                  </Button>
+                  <Button size="sm" variant="destructive" onClick={() => void deleteGroup(g)}>
+                    <Trash2 className="mr-1 size-4" />
+                    ルームを削除
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </TabsContent>
       </Tabs>
     </AppShell>
   );
