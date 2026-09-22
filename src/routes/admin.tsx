@@ -215,6 +215,38 @@ function AdminPage() {
     }
   };
 
+  const deleteGroup = async (g: AdminGroup) => {
+    if (!confirm(`ルーム「${g.name}」を削除しますか？投稿もすべて消えます（元に戻せません）`)) return;
+    try {
+      await removeGroup({ data: { groupId: g.id } });
+      toast.success("ルームを削除しました");
+      await loadGroups(groupQuery, openOnly);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    }
+  };
+
+  const hideGroup = async (g: AdminGroup) => {
+    try {
+      await setGroupOpen({ data: { groupId: g.id, isOpen: !g.is_open } });
+      toast.success(g.is_open ? "非公開にしました" : "公開しました");
+      await loadGroups(groupQuery, openOnly);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    }
+  };
+
+  const clearGroup = async (g: AdminGroup) => {
+    if (!confirm(`ルーム「${g.name}」の投稿をすべて削除しますか？`)) return;
+    try {
+      await clearGroupMessages({ data: { groupId: g.id } });
+      toast.success("投稿を削除しました");
+      await loadGroups(groupQuery, openOnly);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    }
+  };
+
   const deleteMessages = async (u: AdminUser) => {
     if (!confirm(`${u.display_name} さんの投稿をすべて削除しますか？（元に戻せません）`)) return;
     try {
