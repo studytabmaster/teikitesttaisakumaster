@@ -137,6 +137,102 @@ export const adminDeleteUserMessages = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+export type AdminGroup = {
+  id: string;
+  name: string;
+  description: string;
+  owner_id: string;
+  owner_name: string;
+  is_open: boolean;
+  members: number;
+  messages: number;
+  created_at: string;
+};
+
+// オープンチャット（公開ルーム）の一覧
+export const adminListGroups = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { q?: string; openOnly?: boolean }) => input)
+  .handler(async ({ data, context }): Promise<AdminGroup[]> => {
+    await assertAdmin(context.supabase as never, context.userId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+
+    let query = supabaseAdmin
+      .from("groups")
+      .select("id, name, description, owner_id, is_open, created_at")
+      .order("created_at", { ascending: false })
+      .limit(100);
+    if (data.openOnly !== false) query = query.eq("is_open", true);
+    const q = (data.q ?? "").trim();
+    if (q) query = query.or(`name.ilike.%${q}%,description.ilike.%${q}%`);
+
+    const { data: groups } = await query;
+    const rows = groups ?? [];
+    if (rows.length === 0) return [];
+
+    const ids = rows.map((g) => g.id);
+    const [{ data: owners }, { data: members }, { data: msgs }] = await Promise.all([
+      supabaseAdmin.from("profiles").select("id, display_name").in("id", rows.map((g) => g.owner_id)),
+      supabaseAdmin.from("group_members").select("group_id").in("group_id", ids),
+      supabaseAdmin.from("group_messages").select("group_id").in("group_id", ids),
+    ]);
+
+    const ownerMap = new Map((owners ?? []).map((o) => [o.id, o.display_name]));
+    const count = (list: { group_id: string }[] | null, id: string) =>
+      (list ?? []).filter((r) => r.group_id === id).length;
+
+    return rows.map((g) => ({
+      id: g.id,
+      name: g.name,
+      description: g.description ?? "",
+      owner_id: g.owner_id,
+      owner_name: ownerMap.get(g.owner_id) ?? "不明",
+      is_open: !!g.is_open,
+      members: count(members, g.id),
+      messages: count(msgs, g.id),
+      created_at: g.created_at,
+    }));
+  });
+
+// ルームを丸ごと削除（投稿・メンバー・申請も一緒に消える）
+export const adminDeleteGroup = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { groupId: string }) => input)
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context.supabase as never, context.userId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    await supabaseAdmin.from("group_messages").delete().eq("group_id", data.groupId);
+    await supabaseAdmin.from("group_members").delete().eq("group_id", data.groupId);
+    await supabaseAdmin.from("group_join_requests").delete().eq("group_id", data.groupId);
+    await supabaseAdmin.from("group_reads").delete().eq("group_id", data.groupId);
+    await supabaseAdmin.from("reports").update({ group_id: null }).eq("group_id", data.groupId);
+    const { error } = await supabaseAdmin.from("groups").delete().eq("id", data.groupId);
+    if (error) throw new Error("ルームを削除できませんでした");
+    return { ok: true };
+  });
+
+// ルームを非公開に切り替える（削除せず一覧から隠す）
+export const adminSetGroupOpen = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { groupId: string; isOpen: boolean }) => input)
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context.supabase as never, context.userId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    await supabaseAdmin.from("groups").update({ is_open: data.isOpen }).eq("id", data.groupId);
+    return { ok: true };
+  });
+
+// ルーム内の投稿だけをすべて削除
+export const adminClearGroupMessages = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { groupId: string }) => input)
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context.supabase as never, context.userId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    await supabaseAdmin.from("group_messages").delete().eq("group_id", data.groupId);
+    return { ok: true };
+  });
+
 // ダッシュボード用の集計
 export const adminStats = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
