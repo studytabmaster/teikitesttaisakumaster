@@ -325,6 +325,7 @@ function AdminPage() {
               {[
                 { label: "ユーザー数", value: stats.users },
                 { label: "グループ数", value: stats.groups },
+                { label: "公開ルーム", value: stats.openGroups },
                 { label: "総メッセージ", value: stats.messages },
                 { label: "24時間の投稿", value: stats.todayMessages },
                 { label: "未対応の通報", value: stats.openReports },
