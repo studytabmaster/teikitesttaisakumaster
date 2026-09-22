@@ -122,13 +122,25 @@ function AdminPage() {
     [listUsers],
   );
 
+  const loadGroups = useCallback(
+    async (q: string, onlyOpen: boolean) => {
+      try {
+        setGroups(await listGroups({ data: { q, openOnly: onlyOpen } }));
+      } catch (e) {
+        toast.error(errorMessage(e));
+      }
+    },
+    [listGroups],
+  );
+
   const loadAll = useCallback(async () => {
     await Promise.all([
       loadReports(),
       loadUsers(""),
+      loadGroups("", true),
       loadStats({}).then(setStats).catch(() => {}),
     ]);
-  }, [loadReports, loadUsers, loadStats]);
+  }, [loadReports, loadUsers, loadGroups, loadStats]);
 
   useEffect(() => {
     if (!user) return;
