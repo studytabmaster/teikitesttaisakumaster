@@ -10,7 +10,7 @@ import {
   startRingtone,
   stopRingtone,
 } from "@/lib/notify";
-import { useGroupCall } from "@/components/GroupCallProvider";
+import { useGroupCallOptional } from "@/components/GroupCallProvider";
 import type { Group, Message, GroupMessage, Profile } from "@/lib/rine";
 
 // 全画面共通の通知係
@@ -21,7 +21,7 @@ export function Notifications() {
   const { user } = useAuth();
   const nameCache = useRef<Map<string, string>>(new Map());
   const groupNames = useRef<Map<string, string>>(new Map());
-  const groupCall = useGroupCall();
+  const groupCall = useGroupCallOptional();
   const groupCallRef = useRef(groupCall);
   groupCallRef.current = groupCall;
 
