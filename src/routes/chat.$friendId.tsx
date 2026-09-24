@@ -116,7 +116,8 @@ function ChatPage() {
       })
       // 相手が送った瞬間に直接届く経路（DB 経由より速く、通信量も少ない）
       .on("broadcast", { event: "msg" }, ({ payload }) => {
-        upsert(payload as Message);
+        // 相手端末の時計ズレを避けるため、受け取った時刻で表示する
+        upsert({ ...(payload as Message), created_at: new Date().toISOString() });
       })
       .on("broadcast", { event: "del" }, ({ payload }) => {
         const id = (payload as { id?: string })?.id;
