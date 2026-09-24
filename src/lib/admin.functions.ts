@@ -233,6 +233,96 @@ export const adminClearGroupMessages = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+export type AdminMessage = {
+  id: string;
+  kind: "direct" | "group";
+  sender_id: string;
+  sender_name: string;
+  content: string;
+  media_type: string | null;
+  group_name: string | null;
+  created_at: string;
+};
+
+// 投稿を本文で検索（個人トーク＋グループ／オープンチャット）
+export const adminSearchMessages = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { q?: string }) => input)
+  .handler(async ({ data, context }): Promise<AdminMessage[]> => {
+    await assertAdmin(context.supabase as never, context.userId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const q = (data.q ?? "").trim();
+
+    let dmQuery = supabaseAdmin
+      .from("messages")
+      .select("id, sender_id, content, media_type, created_at")
+      .order("created_at", { ascending: false })
+      .limit(50);
+    let gmQuery = supabaseAdmin
+      .from("group_messages")
+      .select("id, sender_id, content, media_type, created_at, group_id")
+      .order("created_at", { ascending: false })
+      .limit(50);
+    if (q) {
+      dmQuery = dmQuery.ilike("content", `%${q}%`);
+      gmQuery = gmQuery.ilike("content", `%${q}%`);
+    }
+    const [dm, gm] = await Promise.all([dmQuery, gmQuery]);
+    const dmRows = dm.data ?? [];
+    const gmRows = gm.data ?? [];
+
+    const senderIds = [...new Set([...dmRows, ...gmRows].map((m) => m.sender_id))];
+    const groupIds = [...new Set(gmRows.map((m) => m.group_id))];
+    const [profs, grps] = await Promise.all([
+      senderIds.length
+        ? supabaseAdmin.from("profiles").select("id, display_name").in("id", senderIds)
+        : { data: [] },
+      groupIds.length
+        ? supabaseAdmin.from("groups").select("id, name").in("id", groupIds)
+        : { data: [] },
+    ]);
+    const nameOf = new Map((profs.data ?? []).map((p) => [p.id, p.display_name]));
+    const groupOf = new Map((grps.data ?? []).map((g) => [g.id, g.name]));
+
+    const all: AdminMessage[] = [
+      ...dmRows.map((m) => ({
+        id: m.id,
+        kind: "direct" as const,
+        sender_id: m.sender_id,
+        sender_name: nameOf.get(m.sender_id) ?? "不明",
+        content: m.content ?? "",
+        media_type: m.media_type,
+        group_name: null,
+        created_at: m.created_at,
+      })),
+      ...gmRows.map((m) => ({
+        id: m.id,
+        kind: "group" as const,
+        sender_id: m.sender_id,
+        sender_name: nameOf.get(m.sender_id) ?? "不明",
+        content: m.content ?? "",
+        media_type: m.media_type,
+        group_name: groupOf.get(m.group_id) ?? null,
+        created_at: m.created_at,
+      })),
+    ];
+    all.sort((a, b) => b.created_at.localeCompare(a.created_at));
+    return all.slice(0, 80);
+  });
+
+// 投稿を1件だけ削除
+export const adminDeleteMessage = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { kind: "direct" | "group"; id: string }) => input)
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context.supabase as never, context.userId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const table = data.kind === "direct" ? "messages" : "group_messages";
+    const { error } = await supabaseAdmin.from(table).delete().eq("id", data.id);
+    if (error) throw new Error("投稿を削除できませんでした");
+    return { ok: true };
+  });
+
 // ダッシュボード用の集計
 export const adminStats = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
