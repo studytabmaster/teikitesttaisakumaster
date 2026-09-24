@@ -151,71 +151,66 @@ export function Notifications() {
       )
       .subscribe();
 
-    // 参加中のルームだけを対象に購読する（全ルームの通信を受け取らない）
+    // グループ・オープンチャットの新着（見える範囲は参加中のルームだけ＝データベース側で制限）
+    // 1本の購読で、あとから参加したルームも自動で対象になる
     let groupChannel: ReturnType<typeof supabase.channel> | null = null;
-    void (async () => {
-      await loadGroups();
-      if (cancelled || myGroups.size === 0) return;
-      let ch = supabase.channel(`notify-groups-${user.id}`);
-      for (const gid of myGroups) {
-        ch = ch.on(
-          "postgres_changes",
-          {
-            event: "INSERT",
-            schema: "public",
-            table: "group_messages",
-            filter: `group_id=eq.${gid}`,
-          },
-          async (payload) => {
-            const m = payload.new as GroupMessage;
-            if (m.sender_id === user.id) return;
-            const [room, from] = await Promise.all([
-              groupName(m.group_id),
-              senderName(m.sender_id),
-            ]);
-            if (cancelled) return;
-            if (m.media_type === "call_start") {
-              // ルーム通話の着信：音を鳴らして、その場で参加できるようにする
-              if (groupCallRef.current.status !== "idle") return;
-              startRingtone();
-              const stopAt = window.setTimeout(() => stopRingtone(), 30000);
-              showIncomingCallNotification(`${from}（${room}）`, m.content === "video");
-              toast(`「${room}」でルーム通話が始まりました`, {
-                description: `${from} さんが通話を開始しました`,
-                duration: 30000,
-                action: {
-                  label: "参加",
-                  onClick: () => {
-                    window.clearTimeout(stopAt);
-                    stopRingtone();
-                    void groupCallRef.current.joinCall(m.group_id, room, m.content === "video");
-                  },
+    void loadGroups();
+    groupChannel = supabase
+      .channel(`notify-groups-${user.id}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "group_messages" },
+        async (payload) => {
+          const m = payload.new as GroupMessage;
+          if (m.sender_id === user.id) return;
+          const [room, from] = await Promise.all([groupName(m.group_id), senderName(m.sender_id)]);
+          if (cancelled) return;
+          if (m.media_type === "call_start") {
+            if (groupCallRef.current.status !== "idle") return;
+            startRingtone();
+            const stopAt = window.setTimeout(() => stopRingtone(), 30000);
+            showIncomingCallNotification(`${from}（${room}）`, m.content === "video");
+            toast(`「${room}」でルーム通話が始まりました`, {
+              description: `${from} さんが通話を開始しました`,
+              duration: 30000,
+              action: {
+                label: "参加",
+                onClick: () => {
+                  window.clearTimeout(stopAt);
+                  stopRingtone();
+                  void groupCallRef.current.joinCall(m.group_id, room, m.content === "video");
                 },
-                cancel: {
-                  label: "あとで",
-                  onClick: () => {
-                    window.clearTimeout(stopAt);
-                    stopRingtone();
-                  },
-                },
-                onDismiss: () => {
+              },
+              cancel: {
+                label: "あとで",
+                onClick: () => {
                   window.clearTimeout(stopAt);
                   stopRingtone();
                 },
-              });
-              return;
-            }
-            const body = m.image_url
-              ? m.media_type === "video"
-                ? `${from}：動画`
-                : `${from}：画像`
-              : `${from}：${m.content}`;
-            showMessageNotification(room, body, `rine-group-${m.group_id}`);
-          },
-        );
-      }
-      groupChannel = ch.subscribe();
-    })();
+              },
+              onDismiss: () => {
+                window.clearTimeout(stopAt);
+                stopRingtone();
+              },
+            });
+            return;
+          }
+          if (m.media_type === "call_end" || m.media_type === "system") return;
+          const body = m.image_url
+            ? m.media_type === "video"
+              ? `${from}：動画`
+              : `${from}：画像`
+            : `${from}：${m.content}`;
+          showMessageNotification(room, body, `rine-group-${m.group_id}`);
+          if (
+            document.visibilityState === "visible" &&
+            !window.location.pathname.includes(m.group_id)
+          ) {
+            toast(room, { description: body });
+          }
+        },
+      )
+      .subscribe();
 
     return () => {
       cancelled = true;
