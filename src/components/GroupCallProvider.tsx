@@ -308,3 +308,8 @@ export function useGroupCall() {
   if (!ctx) throw new Error("useGroupCall must be used within GroupCallProvider");
   return ctx;
 }
+
+/** Provider外（または再読み込み直後）でも落ちない版 */
+export function useGroupCallOptional() {
+  return useContext(GroupCallContext);
+}
