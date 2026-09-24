@@ -166,7 +166,7 @@ export function Notifications() {
           const [room, from] = await Promise.all([groupName(m.group_id), senderName(m.sender_id)]);
           if (cancelled) return;
           if (m.media_type === "call_start") {
-            if (groupCallRef.current.status !== "idle") return;
+            if (groupCallRef.current && groupCallRef.current.status !== "idle") return;
             startRingtone();
             const stopAt = window.setTimeout(() => stopRingtone(), 30000);
             showIncomingCallNotification(`${from}（${room}）`, m.content === "video");
@@ -178,7 +178,7 @@ export function Notifications() {
                 onClick: () => {
                   window.clearTimeout(stopAt);
                   stopRingtone();
-                  void groupCallRef.current.joinCall(m.group_id, room, m.content === "video");
+                  void groupCallRef.current?.joinCall(m.group_id, room, m.content === "video");
                 },
               },
               cancel: {
