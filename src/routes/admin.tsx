@@ -16,15 +16,18 @@ import { formatListTime, initials, type Profile } from "@/lib/rine";
 import {
   adminClearGroupMessages,
   adminDeleteGroup,
+  adminDeleteMessage,
   adminDeleteUserMessages,
   adminListGroups,
   adminListUsers,
+  adminSearchMessages,
   adminSetBan,
   adminSetGroupOpen,
   adminSetRole,
   adminStats,
   unlockAdmin,
   type AdminGroup,
+  type AdminMessage,
   type AdminUser,
 } from "@/lib/admin.functions";
 
@@ -83,6 +86,8 @@ function AdminPage() {
   const [groups, setGroups] = useState<AdminGroup[]>([]);
   const [groupQuery, setGroupQuery] = useState("");
   const [openOnly, setOpenOnly] = useState(true);
+  const [messages, setMessages] = useState<AdminMessage[]>([]);
+  const [msgQuery, setMsgQuery] = useState("");
 
   const unlock = useServerFn(unlockAdmin);
   const listUsers = useServerFn(adminListUsers);
@@ -94,6 +99,8 @@ function AdminPage() {
   const removeGroup = useServerFn(adminDeleteGroup);
   const setGroupOpen = useServerFn(adminSetGroupOpen);
   const clearGroupMessages = useServerFn(adminClearGroupMessages);
+  const searchMessages = useServerFn(adminSearchMessages);
+  const removeMessage = useServerFn(adminDeleteMessage);
 
   const loadReports = useCallback(async () => {
     const { data } = await supabase
