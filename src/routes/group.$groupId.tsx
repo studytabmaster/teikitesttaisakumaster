@@ -137,7 +137,7 @@ function GroupChatPage() {
     const channel = supabase
       .channel(`group-${groupId}`, { config: { broadcast: { self: false } } })
       .on("broadcast", { event: "msg" }, ({ payload }) => {
-        const m = payload as GroupMessage;
+        const m = { ...(payload as GroupMessage), created_at: new Date().toISOString() };
         setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
       })
       .on("broadcast", { event: "del" }, ({ payload }) => {

@@ -35,16 +35,18 @@ export function initials(name: string) {
   return name.trim().slice(0, 2) || "??";
 }
 
+// 端末のタイムゾーン設定に左右されないよう、日本時間で表示する
+const TZ = "Asia/Tokyo";
+
 export function formatTime(iso: string) {
-  return new Date(iso).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
+  return new Date(iso).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", timeZone: TZ });
 }
 
 export function formatListTime(iso: string) {
   const d = new Date(iso);
-  const now = new Date();
-  const sameDay = d.toDateString() === now.toDateString();
-  if (sameDay) return formatTime(iso);
-  return d.toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" });
+  const day = (x: Date) => x.toLocaleDateString("ja-JP", { timeZone: TZ });
+  if (day(d) === day(new Date())) return formatTime(iso);
+  return d.toLocaleDateString("ja-JP", { month: "numeric", day: "numeric", timeZone: TZ });
 }
 
 export function formatDuration(seconds: number) {
