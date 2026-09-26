@@ -18,33 +18,17 @@ import { Notifications } from "@/components/Notifications";
 import { Toaster } from "@/components/ui/sonner";
 import { OfflineBanner } from "@/components/OfflineBanner";
 
-/**
- * AdMax広告
- *
- * 広告ごとに完全に独立したiframeを使用します。
- * keyに広告IDを指定して、Reactによる再利用を防ぎます。
- */
+// 広告コンポーネント
+// 静的HTML経由で読み込むことでRefererを正常送信＆document.writeを確実に動作させる
 function AdMaxBanner({ id }: { id: string }) {
   return (
     <iframe
-      key={id}
-      src={`/ad.html?id=${encodeURIComponent(id)}`}
-      width="160"
-      height="600"
-      title={`スポンサー広告-${id}`}
+      src={`/ad.html?id=${id}`}
+      width={160}
+      height={600}
+      title={`ad-${id}`}
       scrolling="no"
-      loading="eager"
-      referrerPolicy="no-referrer-when-downgrade"
-      className="block w-[160px] h-[600px] shrink-0 border-0 overflow-hidden bg-transparent"
-      style={{
-        display: "block",
-        width: "160px",
-        height: "600px",
-        border: "0",
-        margin: "0",
-        padding: "0",
-        overflow: "hidden",
-      }}
+      className="w-[160px] h-[600px] border-0 overflow-hidden rounded bg-muted/10 shadow-sm"
       sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
     />
   );
@@ -55,9 +39,11 @@ function NotFoundComponent() {
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="max-w-md text-center">
         <h1 className="text-7xl font-bold text-foreground">404</h1>
+
         <h2 className="mt-4 text-xl font-semibold text-foreground">
           Page not found
         </h2>
+
         <p className="mt-2 text-sm text-muted-foreground">
           The page you're looking for doesn't exist or has been moved.
         </p>
@@ -131,7 +117,9 @@ export const Route =
   createRootRouteWithContext<{ queryClient: QueryClient }>()({
     head: () => ({
       meta: [
-        { charSet: "utf-8" },
+        {
+          charSet: "utf-8",
+        },
         {
           name: "viewport",
           content: "width=device-width, initial-scale=1",
@@ -253,60 +241,30 @@ function RootComponent() {
             <Notifications />
             <OfflineBanner />
 
-            {/* メイン画面 */}
+            {/* メイン画面（中央・スマホ幅） */}
             <Outlet />
 
-            {/* PC右側広告 */}
+            {/* PC右サイドの広告 */}
             <aside
               aria-label="スポンサーリンク"
-              className="
-                hidden
-                min-[840px]:flex
-                fixed
-                right-4
-                top-14
-                z-50
-                flex-col
-                gap-6
-                max-h-[calc(100vh-4rem)]
-                overflow-y-auto
-                pointer-events-auto
-              "
+              className="hidden min-[840px]:flex fixed right-4 top-14 z-30 flex-col gap-4 max-h-[calc(100vh-4rem)] overflow-y-auto pointer-events-auto"
             >
               {/* 上の広告 */}
-              <div
-                className="flex w-[160px] shrink-0 flex-col items-center"
-                style={{
-                  width: "160px",
-                  minWidth: "160px",
-                  height: "620px",
-                }}
-              >
-                <span className="mb-1 block text-[10px] text-muted-foreground">
+              <div className="flex flex-col items-center">
+                <span className="text-[10px] text-muted-foreground mb-1">
                   スポンサーリンク
                 </span>
 
-                <AdMaxBanner
-                  id="8e72c87da03a9f6b14801ad9e35ce69d"
-                />
+                <AdMaxBanner id="8e72c87da03a9f6b14801ad9e35ce69d" />
               </div>
 
               {/* 下の広告 */}
-              <div
-                className="flex w-[160px] shrink-0 flex-col items-center"
-                style={{
-                  width: "160px",
-                  minWidth: "160px",
-                  height: "620px",
-                }}
-              >
-                <span className="mb-1 block text-[10px] text-muted-foreground">
+              <div className="flex flex-col items-center">
+                <span className="text-[10px] text-muted-foreground mb-1">
                   スポンサーリンク
                 </span>
 
-                <AdMaxBanner
-                  id="e5719f08d845ec8ceaacd22f674c6316"
-                />
+                <AdMaxBanner id="e5719f08d845ec8ceaacd22f674c6316" />
               </div>
             </aside>
           </GroupCallProvider>
