@@ -276,7 +276,7 @@ function RootComponent() {
                   </span>
 
                   <AdMaxBanner
-                    id="8e72c87da03a9f6b14801ad9e35ce69d"
+                    id="c792115427a5fe7070d1206446fa2c85"
                   />
                 </div>
               </aside>
