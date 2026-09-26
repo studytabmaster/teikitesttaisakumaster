@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="referrer" content="always">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; display: flex; justify-content: center; align-items: flex-start; background: transparent; }
+  </style>
+</head>
+<body>
+  <script>
+    var params = new URLSearchParams(window.location.search);
+    var id = params.get('id');
+    if (id && /^[a-f0-9]+$/i.test(id)) {
+      document.write('<scr' + 'ipt src="https://adm.shinobi.jp/s/' + id + '"></scr' + 'ipt>');
+    }
+  </script>
+</body>
+</html>
