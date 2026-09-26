@@ -19,7 +19,6 @@ import { Toaster } from "@/components/ui/sonner";
 import { OfflineBanner } from "@/components/OfflineBanner";
 
 // 広告コンポーネント
-// 静的HTML経由で読み込むことでRefererを正常送信＆document.writeを確実に動作させる
 function AdMaxBanner({ id }: { id: string }) {
   return (
     <iframe
@@ -28,8 +27,7 @@ function AdMaxBanner({ id }: { id: string }) {
       height={600}
       title={`ad-${id}`}
       scrolling="no"
-      className="w-[160px] h-[600px] border-0 overflow-hidden rounded bg-muted/10 shadow-sm"
-      sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+      className="w-[160px] h-[600px] border-0"
     />
   );
 }
@@ -117,9 +115,7 @@ export const Route =
   createRootRouteWithContext<{ queryClient: QueryClient }>()({
     head: () => ({
       meta: [
-        {
-          charSet: "utf-8",
-        },
+        { charSet: "utf-8" },
         {
           name: "viewport",
           content: "width=device-width, initial-scale=1",
@@ -191,7 +187,8 @@ export const Route =
         },
         {
           rel: "stylesheet",
-          href: "https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700;900&display=swap",
+          href:
+            "https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700;900&display=swap",
         },
         {
           rel: "icon",
@@ -217,7 +214,7 @@ export const Route =
 
 function RootShell({ children }: { children: ReactNode }) {
   return (
-    <html lang="ja">
+    <html lang="en">
       <head>
         <HeadContent />
       </head>
@@ -239,43 +236,19 @@ function RootComponent() {
         <CallProvider>
           <GroupCallProvider>
             <Notifications />
+
             <OfflineBanner />
 
             {/* メイン画面 */}
             <Outlet />
 
-            {/* ========================================= */}
-            {/* PC左右の広告 */}
-            {/* ========================================= */}
-
+            {/* PC広告：840px以上で表示 */}
             <div className="hidden min-[840px]:block">
 
-              {/* ========================= */}
-              {/* 左側広告 */}
-              {/* ========================= */}
-
+              {/* 左広告 */}
               <aside
                 aria-label="左側スポンサーリンク"
-                className="fixed left-4 top-14 z-30 pointer-events-auto"
-              >
-                <div className="flex flex-col items-center">
-                  <span className="text-[10px] text-muted-foreground mb-1">
-                    スポンサーリンク
-                  </span>
-
-                  <AdMaxBanner
-                    id="8e72c87da03a9f6b14801ad9e35ce69d"
-                  />
-                </div>
-              </aside>
-
-              {/* ========================= */}
-              {/* 右側広告 */}
-              {/* ========================= */}
-
-              <aside
-                aria-label="右側スポンサーリンク"
-                className="fixed right-4 top-14 z-30 pointer-events-auto"
+                className="fixed left-4 top-14 z-50"
               >
                 <div className="flex flex-col items-center">
                   <span className="text-[10px] text-muted-foreground mb-1">
@@ -284,6 +257,22 @@ function RootComponent() {
 
                   <AdMaxBanner
                     id="e5719f08d845ec8ceaacd22f674c6316"
+                  />
+                </div>
+              </aside>
+
+              {/* 右広告 */}
+              <aside
+                aria-label="右側スポンサーリンク"
+                className="fixed right-4 top-14 z-50"
+              >
+                <div className="flex flex-col items-center">
+                  <span className="text-[10px] text-muted-foreground mb-1">
+                    スポンサーリンク
+                  </span>
+
+                  <AdMaxBanner
+                    id="8e72c87da03a9f6b14801ad9e35ce69d"
                   />
                 </div>
               </aside>
