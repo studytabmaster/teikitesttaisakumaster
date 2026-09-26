@@ -18,25 +18,42 @@ import { Notifications } from "@/components/Notifications";
 import { Toaster } from "@/components/ui/sonner";
 import { OfflineBanner } from "@/components/OfflineBanner";
 
+// ========================================
 // AdMax 160×600広告
+// ========================================
 function AdMaxBanner({ id }: { id: string }) {
   return (
-    <iframe
-      src={`/ad.html?id=${id}`}
-      width={160}
-      height={600}
-      title={`ad-${id}`}
-      scrolling="no"
-      className="w-[160px] h-[600px] border-0"
-    />
+    <div className="relative w-[160px] h-[600px]">
+      {/* 見た目だけの小さい× */}
+      <span
+        aria-hidden="true"
+        className="absolute -top-1 -right-1 z-[60] flex h-3 w-3 items-center justify-center rounded-full bg-black/50 text-[8px] leading-none text-white"
+      >
+        ×
+      </span>
+
+      <iframe
+        src={`/ad.html?id=${id}`}
+        width={160}
+        height={600}
+        title={`ad-${id}`}
+        scrolling="no"
+        className="w-[160px] h-[600px] border-0"
+      />
+    </div>
   );
 }
 
+// ========================================
+// 404
+// ========================================
 function NotFoundComponent() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="max-w-md text-center">
-        <h1 className="text-7xl font-bold text-foreground">404</h1>
+        <h1 className="text-7xl font-bold text-foreground">
+          404
+        </h1>
 
         <h2 className="mt-4 text-xl font-semibold text-foreground">
           Page not found
@@ -59,6 +76,9 @@ function NotFoundComponent() {
   );
 }
 
+// ========================================
+// エラー
+// ========================================
 function ErrorComponent({
   error,
   reset,
@@ -111,11 +131,16 @@ function ErrorComponent({
   );
 }
 
+// ========================================
+// Root Route
+// ========================================
 export const Route =
   createRootRouteWithContext<{ queryClient: QueryClient }>()({
     head: () => ({
       meta: [
-        { charSet: "utf-8" },
+        {
+          charSet: "utf-8",
+        },
         {
           name: "viewport",
           content: "width=device-width, initial-scale=1",
@@ -212,6 +237,9 @@ export const Route =
     errorComponent: ErrorComponent,
   });
 
+// ========================================
+// HTML Shell
+// ========================================
 function RootShell({ children }: { children: ReactNode }) {
   return (
     <html lang="ja">
@@ -222,7 +250,9 @@ function RootShell({ children }: { children: ReactNode }) {
       <body>
         {children}
 
-        {/* AdMax インタースティシャル広告 */}
+        {/* ========================================
+            AdMax インタースティシャル広告
+            ======================================== */}
         <script src="https://adm.shinobi.jp/s/d602eabaa7d814aa958a79e16519f5d8"></script>
 
         <Scripts />
@@ -231,6 +261,9 @@ function RootShell({ children }: { children: ReactNode }) {
   );
 }
 
+// ========================================
+// Root Component
+// ========================================
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
 
@@ -239,22 +272,31 @@ function RootComponent() {
       <AuthProvider>
         <CallProvider>
           <GroupCallProvider>
+
             <Notifications />
 
             <OfflineBanner />
 
-            {/* メイン画面 */}
+            {/* ========================================
+                メイン画面
+                ======================================== */}
             <Outlet />
 
-            {/* PC広告：840px以上で左右に表示 */}
+            {/* ========================================
+                PC広告
+                840px以上で表示
+                ======================================== */}
             <div className="hidden min-[840px]:block">
 
-              {/* 左広告 */}
+              {/* ========================================
+                  左側広告
+                  ======================================== */}
               <aside
                 aria-label="左側スポンサーリンク"
                 className="fixed left-4 top-14 z-50"
               >
                 <div className="flex flex-col items-center">
+
                   <span className="text-[10px] text-muted-foreground mb-1">
                     スポンサーリンク
                   </span>
@@ -262,31 +304,40 @@ function RootComponent() {
                   <AdMaxBanner
                     id="e5719f08d845ec8ceaacd22f674c6316"
                   />
+
                 </div>
               </aside>
 
-              {/* 右広告 */}
+              {/* ========================================
+                  右側広告
+                  ======================================== */}
               <aside
                 aria-label="右側スポンサーリンク"
                 className="fixed right-4 top-14 z-50"
               >
                 <div className="flex flex-col items-center">
+
                   <span className="text-[10px] text-muted-foreground mb-1">
                     スポンサーリンク
                   </span>
 
                   <AdMaxBanner
-                    id="c792115427a5fe7070d1206446fa2c85"
+                    id="8e72c87da03a9f6b14801ad9e35ce69d"
                   />
+
                 </div>
               </aside>
 
             </div>
+
           </GroupCallProvider>
         </CallProvider>
       </AuthProvider>
 
-      <Toaster position="top-center" richColors />
+      <Toaster
+        position="top-center"
+        richColors
+      />
     </QueryClientProvider>
   );
 }
