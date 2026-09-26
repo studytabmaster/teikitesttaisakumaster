@@ -3,18 +3,42 @@
 <head>
   <meta charset="utf-8">
   <meta name="referrer" content="always">
+
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { overflow: hidden; display: flex; justify-content: center; align-items: flex-start; background: transparent; }
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      width: 160px;
+      height: 600px;
+      overflow: hidden;
+      background: transparent;
+    }
+
+    body {
+      display: block;
+    }
   </style>
 </head>
+
 <body>
   <script>
-    var params = new URLSearchParams(window.location.search);
-    var id = params.get('id');
-    if (id && /^[a-f0-9]+$/i.test(id)) {
-      document.write('<scr' + 'ipt src="https://adm.shinobi.jp/s/' + id + '"></scr' + 'ipt>');
-    }
+    (function () {
+      var params = new URLSearchParams(window.location.search);
+      var id = params.get("id");
+
+      // 広告IDは16進数のみ許可
+      if (!id || !/^[a-f0-9]+$/i.test(id)) {
+        return;
+      }
+
+      var script = document.createElement("script");
+
+      script.src = "https://adm.shinobi.jp/s/" + id;
+      script.async = false;
+
+      document.body.appendChild(script);
+    })();
   </script>
 </body>
 </html>
