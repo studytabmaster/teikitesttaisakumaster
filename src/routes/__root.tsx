@@ -18,24 +18,11 @@ import { Notifications } from "@/components/Notifications";
 import { Toaster } from "@/components/ui/sonner";
 import { OfflineBanner } from "@/components/OfflineBanner";
 
-// 広告コンポーネント（iframe内で動かすことでdocument.writeを100%確実に動作させる）
+// 広告コンポーネント（静的HTML経由で読み込むことでRefererを正常送信＆document.writeを確実に動作させる）
 function AdMaxBanner({ id }: { id: string }) {
-  const srcDoc = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <style>
-    body { margin: 0; padding: 0; overflow: hidden; display: flex; justify-content: center; background: transparent; }
-  </style>
-</head>
-<body>
-  <script src="https://adm.shinobi.jp/s/${id}"></script>
-</body>
-</html>`;
-
   return (
     <iframe
-      srcDoc={srcDoc}
+      src={`/ad.html?id=${id}`}
       width={160}
       height={600}
       title={`ad-${id}`}
