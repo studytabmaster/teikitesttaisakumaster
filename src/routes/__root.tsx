@@ -241,32 +241,54 @@ function RootComponent() {
             <Notifications />
             <OfflineBanner />
 
-            {/* メイン画面（中央・スマホ幅） */}
+            {/* メイン画面 */}
             <Outlet />
 
-            {/* PC右サイドの広告 */}
-            <aside
-              aria-label="スポンサーリンク"
-              className="hidden min-[840px]:flex fixed right-4 top-14 z-30 flex-col gap-4 max-h-[calc(100vh-4rem)] overflow-y-auto pointer-events-auto"
-            >
-              {/* 上の広告 */}
-              <div className="flex flex-col items-center">
-                <span className="text-[10px] text-muted-foreground mb-1">
-                  スポンサーリンク
-                </span>
+            {/* ========================================= */}
+            {/* PC左右の広告 */}
+            {/* ========================================= */}
 
-                <AdMaxBanner id="8e72c87da03a9f6b14801ad9e35ce69d" />
-              </div>
+            <div className="hidden min-[840px]:block">
 
-              {/* 下の広告 */}
-              <div className="flex flex-col items-center">
-                <span className="text-[10px] text-muted-foreground mb-1">
-                  スポンサーリンク
-                </span>
+              {/* ========================= */}
+              {/* 左側広告 */}
+              {/* ========================= */}
 
-                <AdMaxBanner id="e5719f08d845ec8ceaacd22f674c6316" />
-              </div>
-            </aside>
+              <aside
+                aria-label="左側スポンサーリンク"
+                className="fixed left-4 top-14 z-30 pointer-events-auto"
+              >
+                <div className="flex flex-col items-center">
+                  <span className="text-[10px] text-muted-foreground mb-1">
+                    スポンサーリンク
+                  </span>
+
+                  <AdMaxBanner
+                    id="8e72c87da03a9f6b14801ad9e35ce69d"
+                  />
+                </div>
+              </aside>
+
+              {/* ========================= */}
+              {/* 右側広告 */}
+              {/* ========================= */}
+
+              <aside
+                aria-label="右側スポンサーリンク"
+                className="fixed right-4 top-14 z-30 pointer-events-auto"
+              >
+                <div className="flex flex-col items-center">
+                  <span className="text-[10px] text-muted-foreground mb-1">
+                    スポンサーリンク
+                  </span>
+
+                  <AdMaxBanner
+                    id="e5719f08d845ec8ceaacd22f674c6316"
+                  />
+                </div>
+              </aside>
+
+            </div>
           </GroupCallProvider>
         </CallProvider>
       </AuthProvider>
