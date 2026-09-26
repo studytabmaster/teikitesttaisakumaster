@@ -7,7 +7,7 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
@@ -18,24 +18,30 @@ import { Notifications } from "@/components/Notifications";
 import { Toaster } from "@/components/ui/sonner";
 import { OfflineBanner } from "@/components/OfflineBanner";
 
-// 広告コンポーネント（React内でスクリプトを確実に動作させる仕組み）
+// 広告コンポーネント（iframe内で動かすことでdocument.writeを100%確実に動作させる）
 function AdMaxBanner({ id }: { id: string }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    el.innerHTML = "";
-    const script = document.createElement("script");
-    script.src = `https://adm.shinobi.jp/s/${id}`;
-    script.async = true;
-    el.appendChild(script);
-  }, [id]);
+  const srcDoc = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { margin: 0; padding: 0; overflow: hidden; display: flex; justify-content: center; background: transparent; }
+  </style>
+</head>
+<body>
+  <script src="https://adm.shinobi.jp/s/${id}"></script>
+</body>
+</html>`;
 
   return (
-    <div
-      ref={containerRef}
-      className="w-[160px] min-h-[600px] overflow-hidden flex justify-center items-start bg-muted/20 rounded border border-border/40 p-1"
+    <iframe
+      srcDoc={srcDoc}
+      width={160}
+      height={600}
+      title={`ad-${id}`}
+      scrolling="no"
+      className="w-[160px] h-[600px] border-0 overflow-hidden rounded bg-muted/10 shadow-sm"
+      sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
     />
   );
 }
@@ -174,10 +180,10 @@ function RootComponent() {
             {/* メイン画面（中央・スマホ幅） */}
             <Outlet />
 
-            {/* PC右サイドの広告（画面幅1280px以上のPCでのみ右側に固定表示） */}
+            {/* PC右サイドの広告（画面幅840px以上で右側に固定表示） */}
             <aside
               aria-label="スポンサーリンク"
-              className="hidden xl:flex fixed right-4 top-14 z-30 flex-col gap-4 max-h-[calc(100vh-4rem)] overflow-y-auto pointer-events-auto"
+              className="hidden min-[840px]:flex fixed right-4 top-14 z-30 flex-col gap-4 max-h-[calc(100vh-4rem)] overflow-y-auto pointer-events-auto"
             >
               <div className="flex flex-col items-center">
                 <span className="text-[10px] text-muted-foreground mb-1">スポンサーリンク</span>
