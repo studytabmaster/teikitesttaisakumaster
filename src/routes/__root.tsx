@@ -18,7 +18,7 @@ import { Notifications } from "@/components/Notifications";
 import { Toaster } from "@/components/ui/sonner";
 import { OfflineBanner } from "@/components/OfflineBanner";
 
-// 左側の160×600広告
+// AdMax 160×600広告
 function AdMaxBanner({ id }: { id: string }) {
   return (
     <iframe
@@ -246,21 +246,42 @@ function RootComponent() {
             {/* メイン画面 */}
             <Outlet />
 
-            {/* PC左側広告：840px以上で表示 */}
-            <aside
-              aria-label="スポンサーリンク"
-              className="hidden min-[840px]:block fixed left-4 top-14 z-50"
-            >
-              <div className="flex flex-col items-center">
-                <span className="text-[10px] text-muted-foreground mb-1">
-                  スポンサーリンク
-                </span>
+            {/* PC広告：840px以上で左右に表示 */}
+            <div className="hidden min-[840px]:block">
 
-                <AdMaxBanner
-                  id="e5719f08d845ec8ceaacd22f674c6316"
-                />
-              </div>
-            </aside>
+              {/* 左広告 */}
+              <aside
+                aria-label="左側スポンサーリンク"
+                className="fixed left-4 top-14 z-50"
+              >
+                <div className="flex flex-col items-center">
+                  <span className="text-[10px] text-muted-foreground mb-1">
+                    スポンサーリンク
+                  </span>
+
+                  <AdMaxBanner
+                    id="e5719f08d845ec8ceaacd22f674c6316"
+                  />
+                </div>
+              </aside>
+
+              {/* 右広告 */}
+              <aside
+                aria-label="右側スポンサーリンク"
+                className="fixed right-4 top-14 z-50"
+              >
+                <div className="flex flex-col items-center">
+                  <span className="text-[10px] text-muted-foreground mb-1">
+                    スポンサーリンク
+                  </span>
+
+                  <AdMaxBanner
+                    id="8e72c87da03a9f6b14801ad9e35ce69d"
+                  />
+                </div>
+              </aside>
+
+            </div>
           </GroupCallProvider>
         </CallProvider>
       </AuthProvider>
