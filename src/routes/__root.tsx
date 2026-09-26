@@ -7,7 +7,7 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
@@ -18,6 +18,27 @@ import { Notifications } from "@/components/Notifications";
 import { Toaster } from "@/components/ui/sonner";
 import { OfflineBanner } from "@/components/OfflineBanner";
 
+// 広告コンポーネント（React内でスクリプトを確実に動作させる仕組み）
+function AdMaxBanner({ id }: { id: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    el.innerHTML = "";
+    const script = document.createElement("script");
+    script.src = `https://adm.shinobi.jp/s/${id}`;
+    script.async = true;
+    el.appendChild(script);
+  }, [id]);
+
+  return (
+    <div
+      ref={containerRef}
+      className="w-[160px] min-h-[600px] overflow-hidden flex justify-center items-start bg-muted/20 rounded border border-border/40 p-1"
+    />
+  );
+}
 
 function NotFoundComponent() {
   return (
@@ -150,8 +171,23 @@ function RootComponent() {
           <GroupCallProvider>
             <Notifications />
             <OfflineBanner />
-            {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
+            {/* メイン画面（中央・スマホ幅） */}
             <Outlet />
+
+            {/* PC右サイドの広告（画面幅1280px以上のPCでのみ右側に固定表示） */}
+            <aside
+              aria-label="スポンサーリンク"
+              className="hidden xl:flex fixed right-4 top-14 z-30 flex-col gap-4 max-h-[calc(100vh-4rem)] overflow-y-auto pointer-events-auto"
+            >
+              <div className="flex flex-col items-center">
+                <span className="text-[10px] text-muted-foreground mb-1">スポンサーリンク</span>
+                <AdMaxBanner id="8e72c87da03a9f6b14801ad9e35ce69d" />
+              </div>
+              <div className="flex flex-col items-center">
+                <span className="text-[10px] text-muted-foreground mb-1">スポンサーリンク</span>
+                <AdMaxBanner id="e5719f08d845ec8ceaacd22f674c6316" />
+              </div>
+            </aside>
           </GroupCallProvider>
         </CallProvider>
       </AuthProvider>
@@ -159,4 +195,3 @@ function RootComponent() {
     </QueryClientProvider>
   );
 }
-
