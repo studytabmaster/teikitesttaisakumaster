@@ -179,7 +179,10 @@ function AuthPage() {
             : "すでにアカウントをお持ちの方 → ログイン"}
         </button>
 
-        <div className="mt-4 flex justify-center gap-4 text-xs text-muted-foreground">
+               <div className="mt-4 flex flex-wrap justify-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
+          <Link to="/about" className="underline underline-offset-2 hover:text-foreground">
+            RINEについて
+          </Link>
           <Link to="/terms" className="underline underline-offset-2 hover:text-foreground">
             利用規約
           </Link>
