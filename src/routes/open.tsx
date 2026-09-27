@@ -84,20 +84,40 @@ function OpenChatPage() {
 
   const load = useCallback(async () => {
     if (!user) return;
-    const [{ data: openRooms }, { data: memberships }, { data: reqs }] = await Promise.all([
+       const { data: memberships } = await supabase
+      .from("group_members")
+      .select("group_id")
+      .eq("user_id", user.id);
+
+    const joinedIds = (memberships ?? []).map((m) => m.group_id);
+
+    // 全体の公開ルーム（最大1000件）と、自分が参加しているルームを両方取得
+    const [{ data: openRooms }, { data: myJoinedRooms }, { data: reqs }] = await Promise.all([
       supabase
         .from("groups")
         .select("id,name,description,avatar_url,owner_id,requires_approval,created_at")
         .eq("is_open", true)
         .order("created_at", { ascending: false })
-        .limit(100),
-      supabase.from("group_members").select("group_id").eq("user_id", user.id),
-      supabase.from("group_join_requests").select("*").limit(200),
+        .limit(1000),
+      joinedIds.length > 0
+        ? supabase
+            .from("groups")
+            .select("id,name,description,avatar_url,owner_id,requires_approval,created_at")
+            .in("id", joinedIds)
+            .eq("is_open", true)
+        : Promise.resolve({ data: [] }),
+      supabase.from("group_join_requests").select("*").limit(500),
     ]);
 
-    const list = (openRooms ?? []) as OpenRoom[];
+    // 重複を排除してマージ（参加中ルームが1000件漏れしても絶対に消えない）
+    const roomMap = new Map<string, OpenRoom>();
+    for (const r of ((openRooms ?? []) as OpenRoom[])) roomMap.set(r.id, r);
+    for (const r of ((myJoinedRooms ?? []) as OpenRoom[])) roomMap.set(r.id, r);
+
+    const list = Array.from(roomMap.values());
     setRooms(list);
-    setMemberIds((memberships ?? []).map((m) => m.group_id));
+    setMemberIds(joinedIds);
+
 
     const all = (reqs ?? []) as JoinRequest[];
     setMyRequests(all.filter((r) => r.user_id === user.id));
