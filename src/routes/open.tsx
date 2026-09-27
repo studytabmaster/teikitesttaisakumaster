@@ -134,13 +134,23 @@ function OpenChatPage() {
       setRequesters({});
     }
 
-    // 参加人数は公開ルームだけ件数を取得
-    const entries = await Promise.all(
-      list.slice(0, 40).map(async (r) => {
-        const { data } = await supabase.rpc("open_group_member_count", { _group_id: r.id });
-        return [r.id, (data as number | null) ?? 0] as const;
-      }),
-    );
+    // 全オープンチャットの人数を確実に取得
+    const entries: [string, number][] = [];
+    const chunkSize = 20;
+    for (let i = 0; i < list.length; i += chunkSize) {
+      const chunk = list.slice(i, i + chunkSize);
+      const res = await Promise.all(
+        chunk.map(async (r) => {
+          try {
+            const { data } = await supabase.rpc("open_group_member_count", { _group_id: r.id });
+            return [r.id, (data as number | null) ?? 0] as [string, number];
+          } catch {
+            return [r.id, 0] as [string, number];
+          }
+        }),
+      );
+      entries.push(...res);
+    }
     setCounts(Object.fromEntries(entries));
     setLoading(false);
   }, [user]);
@@ -410,10 +420,14 @@ function OpenChatPage() {
                         {initials(room.name)}
                       </AvatarFallback>
                     </Avatar>
-                    <div className="min-w-0 flex-1">
+                                       <div className="min-w-0 flex-1">
                       <p className="truncate font-semibold">{room.name}</p>
                       <p className="truncate text-sm text-muted-foreground">
                         {room.description || "トークを始めましょう"}
+                      </p>
+                      <p className="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
+                        <Users className="size-3" />
+                        {counts[room.id] ?? 0}人
                       </p>
                     </div>
                   </Link>
