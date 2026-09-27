@@ -7,19 +7,19 @@ export const Route = createFileRoute("/privacy")({
       { title: "プライバシーポリシー｜RINE" },
       {
         name: "description",
-        content: "RINE（トーク・通話アプリ）のプライバシーポリシー。取り扱う情報の種類、利用目的、保管方法をまとめています。",
+        content: "RINE（トーク・通話アプリ）のプライバシーポリシー。取り扱う情報の種類、利用目的、広告配信、Cookieの取り扱いについて定めています。",
       },
       { property: "og:title", content: "プライバシーポリシー｜RINE" },
       {
         property: "og:description",
-        content: "RINE のプライバシーポリシー。取り扱う情報の種類、利用目的、保管方法をまとめています。",
+        content: "RINE のプライバシーポリシー。取り扱う情報の種類、利用目的、広告配信について。",
       },
     ],
   }),
   component: PrivacyPage,
 });
 
-const SECTIONS: { title: string; body: string[] }[] = [
+const SECTIONS: { title: string; body: (string | { text: string; link?: string })[] }[] = [
   {
     title: "1. 取り扱う情報",
     body: [
@@ -42,7 +42,7 @@ const SECTIONS: { title: string; body: string[] }[] = [
       "・トーク履歴を保存し、機種変更や別の端末でも表示できるようにするため",
       "・フレンドIDによる友だち追加をできるようにするため",
       "・迷惑行為への対応（ブロック・通報の確認）のため",
-      "・サービスの維持・改善のための集計（個人を特定できない形）",
+      "・サービスの維持・改善および広告配信の効果測定のため",
     ],
   },
   {
@@ -50,7 +50,7 @@ const SECTIONS: { title: string; body: string[] }[] = [
     body: [
       "メッセージやプロフィールなどのデータは、暗号化された外部データベースに保管されます。通信はすべて暗号化（HTTPS）されています。",
       "通話の音声・映像は、サーバーを経由せず、通話する相手と直接やり取りされます（音声・映像そのものは保存されません）。不在着信などの記録のみ保存されます。",
-      "第三者が本サービスのデータベースに勝手にアクセスできないよう、アクセス制御（行単位のセキュリティ設定）を設けています。あなたのトークは、あなたとやり取り相手、およびシステム管理者のみが参照できる状態にあります。",
+      "第三者が本サービスのデータベースに勝手にアクセスできないよう、アクセス制御（行単位のセキュリティ設定）を設けています。",
     ],
   },
   {
@@ -68,29 +68,39 @@ const SECTIONS: { title: string; body: string[] }[] = [
     ],
   },
   {
-    title: "6. 通知・位置情報について",
+    title: "6. 広告の配信について（Google AdSense等）",
+    body: [
+      "当サービスでは、第三者配信事業者（Google AdSenseを含む）が提供する広告配信サービスを利用しています。",
+      "これらの広告配信事業者は、ユーザーの興味に応じた商品やサービスの広告を表示するため、Cookie（クッキー）を使用することがあります。Cookieには、当サービスや他のWebサイトへのアクセスに関する情報が含まれますが、氏名、住所、メールアドレス、電話番号などの個人を特定できる情報は含まれません。",
+      "Googleによる広告配信におけるCookieの使用の詳細や、これを無効にする方法については、Googleのポリシーと規約（https://policies.google.com/technologies/ads）をご覧ください。",
+      "ユーザーは、Googleの「広告設定」ページ（https://www.google.com/settings/ads）にアクセスすることで、パーソナライズド広告に使われるCookieを無効にできます。また、www.aboutads.info にアクセスして、第三者配信事業者のCookieを無効にすることも可能です。",
+    ],
+  },
+  {
+    title: "7. Cookie（クッキー）について",
+    body: [
+      "Cookieとは、Webサイトを訪問した際にご利用の端末に保存される小さなテキストファイルです。当サービスでは、ログイン状態の維持やアクセスの解析、広告の配信のためにCookieを使用しています。",
+      "ユーザーはブラウザの設定によりCookieの受け入れを拒否することができますが、その場合、本サービスの一部の機能が正常に動作しない場合があります。",
+    ],
+  },
+  {
+    title: "8. 通知・位置情報について",
     body: [
       "着信やメッセージの通知は、ブラウザの通知機能を使います。通知の許可はユーザーの操作があった場合にのみ求め、いつでもブラウザ設定で止められます。",
       "本サービスは位置情報を取得・利用しません。",
     ],
   },
   {
-    title: "7. 未成年の利用",
-    body: [
-      "未成年の方が本サービスを利用する場合は、保護者の方の同意を得たうえでご利用ください。",
-    ],
-  },
-  {
-    title: "8. 情報の開示・削除・お問い合わせ",
+    title: "9. 情報の開示・削除・お問い合わせ",
     body: [
       "ご自身の登録情報（表示名・ひとこと・アイコン）は、プロフィール画面からいつでも確認・変更できます。",
-      "アカウントやデータの削除をご希望の場合は、アプリ内の Q&A に記載の方法でお問い合わせください。確認後、データを削除いたします。",
+      "アカウントやデータの削除をご希望の場合は、アプリ内の Q&A に記載の方法でお問い合わせください。確認後、速やかにデータを削除いたします。",
     ],
   },
   {
-    title: "9. ポリシーの変更",
+    title: "10. ポリシーの変更",
     body: [
-      "本ポリシーは、必要に応じて変更することがあります。変更後の内容は、本サービス上に掲載した時点から適用されます。",
+      "本ポリシーは、法令の改正やサービスの改善、広告配信方針の変更等に伴い、必要に応じて改定することがあります。改定後の内容は、本サービス上に掲載された時点から効力を生じるものとします。",
     ],
   },
 ];
@@ -100,7 +110,7 @@ function PrivacyPage() {
     <div className="mx-auto flex min-h-screen w-full max-w-lg flex-col bg-background">
       <header className="sticky top-0 z-20 flex items-center gap-2 border-b border-border bg-background/90 px-4 py-3 backdrop-blur">
         <Link
-          to="/profile"
+          to="/"
           className="flex items-center rounded-full p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           aria-label="戻る"
         >
@@ -113,7 +123,7 @@ function PrivacyPage() {
         <div className="mb-5 flex items-center gap-3 rounded-2xl bg-muted/60 p-4">
           <Lock className="size-8 shrink-0 text-primary" />
           <p className="text-sm leading-relaxed text-muted-foreground">
-            RINE で扱う情報と、その使いみちをわかりやすくまとめました。最終更新日：2026年9月21日
+            RINE で扱う情報、広告配信、Cookieの取り扱いについて定めています。最終更新日：2026年9月27日
           </p>
         </div>
 
@@ -123,7 +133,7 @@ function PrivacyPage() {
               <h2 className="text-sm font-bold">{s.title}</h2>
               <div className="mt-2 space-y-2 text-sm leading-relaxed text-muted-foreground">
                 {s.body.map((p, i) => (
-                  <p key={i}>{p}</p>
+                  <p key={i}>{typeof p === "string" ? p : p.text}</p>
                 ))}
               </div>
             </section>
