@@ -178,8 +178,7 @@ function AuthPage() {
             ? "アカウントをお持ちでない方 → 新規登録"
             : "すでにアカウントをお持ちの方 → ログイン"}
         </button>
-
-               <div className="mt-4 flex flex-wrap justify-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
+        <div className="mt-4 flex flex-wrap justify-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
           <Link to="/about" className="underline underline-offset-2 hover:text-foreground">
             RINEについて
           </Link>
@@ -188,6 +187,9 @@ function AuthPage() {
           </Link>
           <Link to="/privacy" className="underline underline-offset-2 hover:text-foreground">
             プライバシーポリシー
+          </Link>
+          <Link to="/contact" className="underline underline-offset-2 hover:text-foreground">
+            お問い合わせ
           </Link>
         </div>
       </div>
