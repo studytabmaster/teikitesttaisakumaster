@@ -306,28 +306,30 @@ function GroupChatPage() {
       });
   };
 
-  const unsend = async (m: GroupMessage) => {
-    if (!window.confirm("このメッセージを完全に削除します。元に戻せません。よろしいですか？")) return;
-    if (m.image_url) {
-      const { error: fileError } = await supabase.storage.from("chat-images").remove([m.image_url]);
-      if (fileError) {
-        toast.error("ファイルを削除できませんでした");
-        return;
+   const handleDelete = async (m: GroupMessage) => {
+    const isOwn = m.sender_id === user?.id;
+    const confirmMsg = isOwn
+      ? "このメッセージを取り消します。元に戻せません。よろしいですか？"
+      : "【管理者権限】このメッセージを削除します。参加者全員の画面から削除されます。よろしいですか？";
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      await deleteGroupMessage({ data: { messageId: m.id, groupId } });
+      if (m.image_url) {
+        forgetMediaUrl(m.image_url);
       }
-      forgetMediaUrl(m.image_url);
+      if (replyTo?.id === m.id) setReplyTo(null);
+      setMessages((prev) =>
+        prev.filter((x) => x.id !== m.id).map((x) => (x.reply_to_id === m.id ? { ...x, reply_to_id: null } : x)),
+      );
+      // 部屋にいる全員の画面から即座に消去する
+      void liveRef.current?.send({ type: "broadcast", event: "del", payload: { id: m.id } });
+      toast.success(isOwn ? "取り消しました" : "メッセージを削除しました");
+    } catch (err: any) {
+      toast.error(err?.message || "削除できませんでした");
     }
-    const { error } = await supabase.from("group_messages").delete().eq("id", m.id);
-    if (error) {
-      toast.error("送信を取り消せませんでした");
-      return;
-    }
-    if (replyTo?.id === m.id) setReplyTo(null);
-    setMessages((prev) =>
-      prev.filter((x) => x.id !== m.id).map((x) => (x.reply_to_id === m.id ? { ...x, reply_to_id: null } : x)),
-    );
-    void liveRef.current?.send({ type: "broadcast", event: "del", payload: { id: m.id } });
-    toast.success("完全に削除しました");
   };
+
 
   const backTo = group?.is_open ? "/open" : "/groups";
 
@@ -573,16 +575,22 @@ function GroupChatPage() {
               >
                 <Reply className="size-3.5" />
               </button>
-              {mine && (
+                          {(mine || isOwner) && (
                 <button
                   type="button"
-                  aria-label="送信を取り消す"
-                  onClick={() => void unsend(m)}
+                  aria-label={mine ? "送信を取り消す" : "メッセージを削除"}
+                  title={mine ? "送信を取り消す" : "管理者として削除"}
+                  onClick={() => void handleDelete(m)}
                   className="mb-1 rounded-full p-1 text-foreground/30 transition-colors hover:bg-foreground/10 hover:text-destructive"
                 >
-                  <Undo2 className="size-3.5" />
+                  {mine ? (
+                    <Undo2 className="size-3.5" />
+                  ) : (
+                    <Trash2 className="size-3.5 text-destructive/70 hover:text-destructive" />
+                  )}
                 </button>
               )}
+
 
             </div>
           );
