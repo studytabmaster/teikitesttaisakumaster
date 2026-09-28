@@ -83,6 +83,7 @@ function TalksPage() {
           .from("messages")
           // 一覧では必要な列だけ・直近分だけ取得して通信量とクラウド利用量を抑える
           .select("id,sender_id,receiver_id,content,image_url,media_type,read_at,created_at")
+          .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
           .order("created_at", { ascending: false })
           .limit(200),
       ]);
