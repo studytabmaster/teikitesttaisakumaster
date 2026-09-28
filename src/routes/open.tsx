@@ -62,6 +62,10 @@ type JoinRequest = {
 };
 
 type Tab = "discover" | "joined" | "requests";
+let cachedRooms: OpenRoom[] | null = null;
+let cachedCounts: Record<string, number> = {};
+let lastFetchTime = 0;
+const CACHE_TTL = 5 * 60 * 1000;
 
 function OpenChatPage() {
   const { user } = useAuth();
