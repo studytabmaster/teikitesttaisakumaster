@@ -4,6 +4,7 @@ import { ArrowLeft, Ban, Check, Flag, ImagePlus, LogOut, Phone, Reply, Send, Set
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { forgetMediaUrl } from "@/lib/mediaUrl";
+import { deleteGroupMessage } from "@/lib/group.functions";
 import { useAuth } from "@/hooks/useAuth";
 import { ChatMedia } from "@/components/ChatMedia";
 import { ReportDialog } from "@/components/ReportDialog";
