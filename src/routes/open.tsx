@@ -156,72 +156,7 @@ function OpenChatPage() {
   }, [user]);
 
 
-    const joinedIds = (memberships ?? []).map((m) => m.group_id);
-
-    // 全体の公開ルーム（最大1000件）と、自分が参加しているルームを両方取得
-    const [{ data: openRooms }, { data: myJoinedRooms }, { data: reqs }] = await Promise.all([
-      supabase
-        .from("groups")
-        .select("id,name,description,avatar_url,owner_id,requires_approval,created_at")
-        .eq("is_open", true)
-        .order("created_at", { ascending: false })
-        .limit(1000),
-      joinedIds.length > 0
-        ? supabase
-            .from("groups")
-            .select("id,name,description,avatar_url,owner_id,requires_approval,created_at")
-            .in("id", joinedIds)
-            .eq("is_open", true)
-        : Promise.resolve({ data: [] }),
-      supabase.from("group_join_requests").select("*").limit(500),
-    ]);
-
-    // 重複を排除してマージ（参加中ルームが1000件漏れしても絶対に消えない）
-    const roomMap = new Map<string, OpenRoom>();
-    for (const r of ((openRooms ?? []) as OpenRoom[])) roomMap.set(r.id, r);
-    for (const r of ((myJoinedRooms ?? []) as OpenRoom[])) roomMap.set(r.id, r);
-
-    const list = Array.from(roomMap.values());
-    setRooms(list);
-    setMemberIds(joinedIds);
-
-
-    const all = (reqs ?? []) as JoinRequest[];
-    setMyRequests(all.filter((r) => r.user_id === user.id));
-    const mineToReview = all.filter((r) => r.user_id !== user.id && r.status === "pending");
-    setIncoming(mineToReview);
-
-    const ids = Array.from(new Set(mineToReview.map((r) => r.user_id)));
-    if (ids.length > 0) {
-      const { data: profs } = await supabase.from("profiles").select("*").in("id", ids);
-      const map: Record<string, Profile> = {};
-      for (const p of (profs ?? []) as Profile[]) map[p.id] = p;
-      setRequesters(map);
-    } else {
-      setRequesters({});
-    }
-
-    // 全オープンチャットの人数を確実に取得
-    const entries: [string, number][] = [];
-    const chunkSize = 20;
-    for (let i = 0; i < list.length; i += chunkSize) {
-      const chunk = list.slice(i, i + chunkSize);
-      const res = await Promise.all(
-        chunk.map(async (r) => {
-          try {
-            const { data } = await supabase.rpc("open_group_member_count", { _group_id: r.id });
-            return [r.id, (data as number | null) ?? 0] as [string, number];
-          } catch {
-            return [r.id, 0] as [string, number];
-          }
-        }),
-      );
-      entries.push(...res);
-    }
-    setCounts(Object.fromEntries(entries));
-    setLoading(false);
-  }, [user]);
-
+   
   useEffect(() => {
     void load();
   }, [load]);
