@@ -82,12 +82,79 @@ function OpenChatPage() {
   const [description, setDescription] = useState("");
   const [approval, setApproval] = useState(true);
 
+
   const load = useCallback(async () => {
     if (!user) return;
-       const { data: memberships } = await supabase
+
+    const now = Date.now();
+    // 直近5分以内に取得済みならDBを読まずにキャッシュを使う（DBクレジット消費ゼロ）
+    if (cachedRooms && now - lastFetchTime < CACHE_TTL) {
+      setRooms(cachedRooms);
+      setCounts(cachedCounts);
+      setLoading(false);
+      return;
+    }
+
+    const { data: memberships } = await supabase
       .from("group_members")
       .select("group_id")
       .eq("user_id", user.id);
+
+    const joinedIds = (memberships ?? []).map((m) => m.group_id);
+
+    const [{ data: openRooms }, { data: myJoinedRooms }, { data: reqs }] = await Promise.all([
+      supabase
+        .from("groups")
+        .select("id,name,description,avatar_url,owner_id,requires_approval,created_at")
+        .eq("is_open", true)
+        .order("created_at", { ascending: false })
+        .limit(1000),
+      joinedIds.length > 0
+        ? supabase
+            .from("groups")
+            .select("id,name,description,avatar_url,owner_id,requires_approval,created_at")
+            .in("id", joinedIds)
+            .eq("is_open", true)
+        : Promise.resolve({ data: [] }),
+      supabase.from("group_join_requests").select("*").limit(500),
+    ]);
+
+    const roomMap = new Map<string, OpenRoom>();
+    for (const r of ((openRooms ?? []) as OpenRoom[])) roomMap.set(r.id, r);
+    for (const r of ((myJoinedRooms ?? []) as OpenRoom[])) roomMap.set(r.id, r);
+
+    const list = Array.from(roomMap.values());
+    setRooms(list);
+    setMemberIds(joinedIds);
+
+    const all = (reqs ?? []) as JoinRequest[];
+    setMyRequests(all.filter((r) => r.user_id === user.id));
+    const mineToReview = all.filter((r) => r.user_id !== user.id && r.status === "pending");
+    setIncoming(mineToReview);
+
+    // 人数取得（上位40部屋＋参加中部屋に絞ってDB負荷を最小化）
+    const targetRooms = Array.from(new Set([...joinedIds, ...list.slice(0, 40).map((r) => r.id)]));
+    const entries = await Promise.all(
+      targetRooms.map(async (id) => {
+        try {
+          const { data } = await supabase.rpc("open_group_member_count", { _group_id: id });
+          return [id, (data as number | null) ?? 0] as const;
+        } catch {
+          return [id, 0] as const;
+        }
+      }),
+    );
+    const countMap = Object.fromEntries(entries);
+
+    // キャッシュに保存
+    cachedRooms = list;
+    cachedCounts = countMap;
+    lastFetchTime = now;
+
+    setCounts(countMap);
+    setLoading(false);
+  }, [user]);
+
 
     const joinedIds = (memberships ?? []).map((m) => m.group_id);
 
