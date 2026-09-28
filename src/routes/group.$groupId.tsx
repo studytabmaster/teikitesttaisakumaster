@@ -209,10 +209,35 @@ function GroupChatPage() {
     window.setTimeout(() => setHighlightId(null), 1600);
   };
 
+    const lastSendTimeRef = useRef<number>(0);
+  const lastContentRef = useRef<string>("");
+
   const send = async (e: React.FormEvent) => {
     e.preventDefault();
     const content = text.trim();
     if (!content || !user) return;
+
+    // 【荒らし・負荷対策1】長文コピペ制限（最大500文字）
+    if (content.length > 500) {
+      toast.error("メッセージは500文字以内で入力してください");
+      return;
+    }
+
+    // 【荒らし・負荷対策2】連投制限（1.5秒以内の連続送信をブロック）
+    const now = Date.now();
+    if (now - lastSendTimeRef.current < 1500) {
+      toast("少し待ってから送信してください", { duration: 1500 });
+      return;
+    }
+
+    // 【荒らし・負荷対策3】同一文面の連続送信スパムを防止
+    if (content === lastContentRef.current && now - lastSendTimeRef.current < 10000) {
+      toast.error("同じメッセージを連続で送信することはできません");
+      return;
+    }
+
+    lastSendTimeRef.current = now;
+    lastContentRef.current = content;
     setText("");
     const clean = maskProfanity(content);
     const parentId = replyTo?.id ?? null;
