@@ -49,7 +49,7 @@ export const adminListUsers = createServerFn({ method: "POST" })
       .from("profiles")
       .select("id, display_name, username, friend_code, avatar_url, created_at")
       .order("created_at", { ascending: false })
-      .limit(100);
+      .limit(150);
     const q = (data.q ?? "").trim();
     if (q) query = query.or(`display_name.ilike.%${q}%,username.ilike.%${q}%,friend_code.ilike.%${q}%`);
 
@@ -257,12 +257,12 @@ export const adminSearchMessages = createServerFn({ method: "POST" })
       .from("messages")
       .select("id, sender_id, content, media_type, created_at")
       .order("created_at", { ascending: false })
-      .limit(50);
+      .limit(60);
     let gmQuery = supabaseAdmin
       .from("group_messages")
       .select("id, sender_id, content, media_type, created_at, group_id")
       .order("created_at", { ascending: false })
-      .limit(50);
+      .limit(60);
     if (q) {
       dmQuery = dmQuery.ilike("content", `%${q}%`);
       gmQuery = gmQuery.ilike("content", `%${q}%`);
@@ -307,7 +307,7 @@ export const adminSearchMessages = createServerFn({ method: "POST" })
       })),
     ];
     all.sort((a, b) => b.created_at.localeCompare(a.created_at));
-    return all.slice(0, 80);
+    return all.slice(0, 100);
   });
 
 // 投稿を1件だけ削除
@@ -321,6 +321,34 @@ export const adminDeleteMessage = createServerFn({ method: "POST" })
     const { error } = await supabaseAdmin.from(table).delete().eq("id", data.id);
     if (error) throw new Error("投稿を削除できませんでした");
     return { ok: true };
+  });
+
+// 全オープンチャットへ公式アナウンスを一斉配信
+export const adminBroadcastToOpenGroups = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { content: string }) => input)
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context.supabase as never, context.userId);
+    const content = (data.content ?? "").trim();
+    if (!content) throw new Error("アナウンス内容を入力してください");
+
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: openGroups } = await supabaseAdmin
+      .from("groups")
+      .select("id")
+      .eq("is_open", true);
+
+    const groups = openGroups ?? [];
+    if (groups.length === 0) return { count: 0 };
+
+    const records = groups.map((g) => ({
+      group_id: g.id,
+      sender_id: context.userId,
+      content: `【📢 運営アナウンス】\n${content}`,
+    }));
+
+    await supabaseAdmin.from("group_messages").insert(records);
+    return { count: groups.length };
   });
 
 // ダッシュボード用の集計
