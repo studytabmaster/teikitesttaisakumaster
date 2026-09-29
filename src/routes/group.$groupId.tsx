@@ -82,6 +82,70 @@ export const Route = createFileRoute("/group/$groupId")({
   component: GroupChatPage,
 });
 
+/**
+ * 荒らし対策
+ *
+ * 普通の日本語メッセージには影響しにくいように、
+ * 「異常に同じ文字が続く」「制御・ゼロ幅文字が大量に入る」
+ * 「極端に記号だけが続く」といったケースだけを検知する。
+ */
+function hasAbnormalCharacterFlood(content: string): boolean {
+  if (!content) return false;
+
+  // ゼロ幅文字・不可視系文字。
+  // 通常の日本語入力ではほぼ使われないため、大量使用のみブロック。
+  const invisibleMatches = content.match(
+    /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/g,
+  );
+
+  if (invisibleMatches && invisibleMatches.length >= 8) {
+    return true;
+  }
+
+  // 同じ文字を異常に連続させるケース。
+  // 20文字以上の同一文字連続を荒らしとみなす。
+  if (/(.)\1{19,}/u.test(content)) {
+    return true;
+  }
+
+  // 同じ2～4文字の組み合わせを大量に繰り返すケース。
+  if (/(.{1,4})\1{9,}/u.test(content)) {
+    return true;
+  }
+
+  // 記号だけの極端な連続。
+  const visible = content.replace(/\s/g, "");
+  if (visible.length >= 30) {
+    const symbolCount = (
+      visible.match(
+        /[!-/:-@[-`{-~！？。、・「」『』【】［］（）〔〕〈〉《》…ー〜～※☆★♪♬♡♥●○◎◇◆△▲▽▼→←↑↓＋－×÷＝≠∞]/gu,
+      ) ?? []
+    ).length;
+
+    if (symbolCount / visible.length >= 0.92) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * 連投の異常なバーストだけを検知。
+ *
+ * 普通の会話では余裕を持たせ、
+ * 短時間に大量の送信が発生した場合だけ制限する。
+ */
+function isBurstSend(
+  history: number[],
+  now: number,
+): boolean {
+  const recent = history.filter((time) => now - time <= 5000);
+
+  // 5秒以内に8通以上なら異常な高速連投と判断。
+  return recent.length >= 8;
+}
+
 function GroupChatPage() {
   const { groupId } = Route.useParams();
   const { user, loading } = useAuth();
@@ -97,26 +161,19 @@ function GroupChatPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const liveRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
-  // ==============================
-  // 荒らし・連投対策
-  // ==============================
+  // 直近の送信履歴。
+  // 通常の会話では制限せず、異常な高速連投だけ検知する。
+  const sendHistoryRef = useRef<number[]>([]);
 
-  // 最後にメッセージを送った時刻
-  const lastSendTimeRef = useRef<number>(0);
-
-  // 最後に送った本文
+  // 同一文面の連続送信検知用。
   const lastContentRef = useRef<string>("");
+  const sameContentCountRef = useRef(0);
+  const sameContentWindowRef = useRef(0);
 
-  // 直近10秒間の送信履歴
-  const recentSendTimesRef = useRef<number[]>([]);
+  // 送信後の短時間クールダウン。
+  const blockedUntilRef = useRef(0);
 
-  // 直近10秒間のメディア送信履歴
-  const recentMediaTimesRef = useRef<number[]>([]);
-
-  // 一時的なクールダウン終了時刻
-  const cooldownUntilRef = useRef<number>(0);
-
-  // 送信内容をメンバーへ即座に届ける
+  // 送った内容をメンバーの画面へ即座に届ける（DB反映を待たない）
   const broadcastMessage = (m: GroupMessage) => {
     void liveRef.current?.send({
       type: "broadcast",
@@ -188,8 +245,11 @@ function GroupChatPage() {
 
       setGroup((g as Group) ?? null);
 
+      // 新しい順に取って表示用に昇順へ戻す
       setMessages(
-        (((msgs ?? []) as GroupMessage[]).slice().reverse()) as GroupMessage[],
+        (((msgs ?? []) as GroupMessage[])
+          .slice()
+          .reverse()) as GroupMessage[],
       );
 
       void loadMembers();
@@ -297,7 +357,7 @@ function GroupChatPage() {
     };
   }, [user, groupId, loadMembers]);
 
-  // トークを開いている間は既読を更新
+  // トークを開いている間は既読を更新する
   useEffect(() => {
     if (!user) return;
 
@@ -321,7 +381,7 @@ function GroupChatPage() {
     });
   }, [messages]);
 
-  // 引用元へ移動
+  // 引用元のメッセージまでスクロールして一瞬光らせる
   const jumpTo = (id: string) => {
     const el = document.getElementById(`msg-${id}`);
 
@@ -342,10 +402,6 @@ function GroupChatPage() {
     }, 1600);
   };
 
-  // ==============================
-  // メッセージ送信
-  // ==============================
-
   const send = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -353,34 +409,7 @@ function GroupChatPage() {
 
     if (!content || !user) return;
 
-    const now = Date.now();
-
-    // --------------------------------
-    // クールダウン中
-    // --------------------------------
-
-    if (now < cooldownUntilRef.current) {
-      const wait = Math.max(
-        1,
-        Math.ceil(
-          (cooldownUntilRef.current - now) / 1000,
-        ),
-      );
-
-      toast(
-        `少し待ってから送信してください（${wait}秒）`,
-        {
-          duration: 1500,
-        },
-      );
-
-      return;
-    }
-
-    // --------------------------------
     // 最大500文字
-    // --------------------------------
-
     if (content.length > 500) {
       toast.error(
         "メッセージは500文字以内で入力してください",
@@ -388,74 +417,88 @@ function GroupChatPage() {
       return;
     }
 
-    // --------------------------------
-    // 同一文章の連投防止
-    // --------------------------------
+    const now = Date.now();
 
-    if (
-      content === lastContentRef.current &&
-      now - lastSendTimeRef.current < 10000
-    ) {
-      toast.error(
-        "同じメッセージを連続で送信することはできません",
+    // 異常な高速連投による一時停止中
+    if (now < blockedUntilRef.current) {
+      const remain = Math.ceil(
+        (blockedUntilRef.current - now) / 1000,
       );
-      return;
-    }
-
-    // --------------------------------
-    // 直近10秒の送信履歴を整理
-    // --------------------------------
-
-    const recent = recentSendTimesRef.current.filter(
-      (time) => now - time < 10000,
-    );
-
-    // --------------------------------
-    // 10秒で6件以上なら5秒停止
-    // --------------------------------
-
-    if (recent.length >= 6) {
-      cooldownUntilRef.current = now + 5000;
-      recentSendTimesRef.current = recent;
 
       toast(
-        "短時間にたくさん送信しています。5秒待ってください",
+        `連続送信が多いため、あと${remain}秒ほど待ってください`,
         {
-          duration: 2000,
+          duration: 1800,
         },
       );
 
       return;
     }
 
-    // --------------------------------
-    // 通常時の最低送信間隔
-    // --------------------------------
+    // 特殊文字・同一文字の異常な繰り返し
+    if (hasAbnormalCharacterFlood(content)) {
+      toast.error(
+        "同じ文字や特殊文字を大量に繰り返すメッセージは送信できません",
+      );
+      return;
+    }
 
-    if (
-      now - lastSendTimeRef.current < 1200
-    ) {
-      toast("少し待ってから送信してください", {
-        duration: 1200,
-      });
+    // 直近5秒間の送信履歴を整理
+    sendHistoryRef.current = sendHistoryRef.current.filter(
+      (time) => now - time <= 5000,
+    );
+
+    // 普通の連続送信は許可。
+    // 5秒以内に8通以上など、明らかな高速連投だけ制限する。
+    if (isBurstSend(sendHistoryRef.current, now)) {
+      blockedUntilRef.current = now + 5000;
+
+      toast(
+        "短時間にたくさん送信されています。少し待ってください",
+        {
+          duration: 2200,
+        },
+      );
 
       return;
     }
 
-    // --------------------------------
-    // 履歴を更新
-    // --------------------------------
+    // 同じ内容の高速連投だけ検知。
+    if (content === lastContentRef.current) {
+      const elapsed = now - sameContentWindowRef.current;
 
-    recent.push(now);
+      if (elapsed <= 10000) {
+        sameContentCountRef.current += 1;
+      } else {
+        sameContentCountRef.current = 1;
+        sameContentWindowRef.current = now;
+      }
+    } else {
+      lastContentRef.current = content;
+      sameContentCountRef.current = 1;
+      sameContentWindowRef.current = now;
+    }
 
-    recentSendTimesRef.current = recent;
-    lastSendTimeRef.current = now;
-    lastContentRef.current = content;
+    // 同じ文章を10秒以内に5回以上送った場合だけ制限
+    if (sameContentCountRef.current >= 5) {
+      blockedUntilRef.current = now + 5000;
+      sameContentCountRef.current = 0;
+
+      toast(
+        "同じメッセージの連続送信が多いため、少し待ってください",
+        {
+          duration: 2200,
+        },
+      );
+
+      return;
+    }
+
+    sendHistoryRef.current.push(now);
 
     setText("");
 
     const clean = maskProfanity(content);
-
     const parentId = replyTo?.id ?? null;
 
     setReplyTo(null);
@@ -463,10 +506,6 @@ function GroupChatPage() {
     if (clean !== content) {
       toast("不適切な言葉は伏字になります");
     }
-
-    // --------------------------------
-    // オフライン
-    // --------------------------------
 
     if (
       typeof navigator !== "undefined" &&
@@ -479,17 +518,11 @@ function GroupChatPage() {
         content: clean,
       });
 
-      toast(
-        "オフラインのため、つながったら送信します",
-      );
-
+      toast("オフラインのため、つながったら送信します");
       return;
     }
 
-    // --------------------------------
-    // 楽観表示
-    // --------------------------------
-
+    // 先に自分の画面へ表示し、メンバーへも即配信する
     const optimistic: GroupMessage = {
       id: crypto.randomUUID(),
       group_id: groupId,
@@ -501,18 +534,11 @@ function GroupChatPage() {
       reply_to_id: parentId,
     };
 
-    setMessages((prev) => [
-      ...prev,
-      optimistic,
-    ]);
+    setMessages((prev) => [...prev, optimistic]);
 
-    // DB応答を待たず即配信
     broadcastMessage(optimistic);
 
-    // --------------------------------
-    // DB保存
-    // --------------------------------
-
+    // 保存は裏で行う
     const { error } = await supabase
       .from("group_messages")
       .insert({
@@ -525,9 +551,7 @@ function GroupChatPage() {
 
     if (error) {
       setMessages((prev) =>
-        prev.filter(
-          (x) => x.id !== optimistic.id,
-        ),
+        prev.filter((x) => x.id !== optimistic.id),
       );
 
       enqueueMessage({
@@ -543,10 +567,6 @@ function GroupChatPage() {
     }
   };
 
-  // ==============================
-  // 画像・動画送信
-  // ==============================
-
   const pickMedia = async (
     e: React.ChangeEvent<HTMLInputElement>,
   ) => {
@@ -556,37 +576,7 @@ function GroupChatPage() {
 
     if (!file || !user) return;
 
-    const now = Date.now();
-
-    // --------------------------------
-    // クールダウン中
-    // --------------------------------
-
-    if (now < cooldownUntilRef.current) {
-      const wait = Math.max(
-        1,
-        Math.ceil(
-          (cooldownUntilRef.current - now) / 1000,
-        ),
-      );
-
-      toast(
-        `少し待ってから送信してください（${wait}秒）`,
-        {
-          duration: 1500,
-        },
-      );
-
-      return;
-    }
-
-    // --------------------------------
-    // ファイル形式確認
-    // --------------------------------
-
-    const isVideo = file.type.startsWith(
-      "video/",
-    );
+    const isVideo = file.type.startsWith("video/");
 
     if (
       !file.type.startsWith("image/") &&
@@ -595,179 +585,102 @@ function GroupChatPage() {
       toast.error(
         "画像または動画を選んでください",
       );
-
       return;
     }
-
-    // --------------------------------
-    // メディア連投制限
-    // 10秒以内に4回以上
-    // --------------------------------
-
-    const recentMedia =
-      recentMediaTimesRef.current.filter(
-        (time) => now - time < 10000,
-      );
-
-    if (recentMedia.length >= 4) {
-      cooldownUntilRef.current = now + 5000;
-
-      recentMediaTimesRef.current =
-        recentMedia;
-
-      toast(
-        "短時間にたくさん送信しています。5秒待ってください",
-        {
-          duration: 2000,
-        },
-      );
-
-      return;
-    }
-
-    recentMedia.push(now);
-
-    recentMediaTimesRef.current =
-      recentMedia;
 
     setUploading(true);
 
-    try {
-      // --------------------------------
-      // 画像はアップロード前に圧縮
-      // --------------------------------
+    // 画像はアップロード前に自動圧縮
+    const upload = isVideo
+      ? file
+      : await compressImage(file);
 
-      const upload = isVideo
-        ? file
-        : await compressImage(file);
+    const limit = isVideo ? 10 : 5;
 
-      // 動画10MB / 画像5MB
-      const limit = isVideo ? 10 : 5;
+    if (upload.size > limit * 1024 * 1024) {
+      setUploading(false);
 
-      if (
-        upload.size >
-        limit * 1024 * 1024
-      ) {
-        toast.error(
-          `${isVideo ? "動画" : "画像"}は${limit}MBまでです`,
-        );
-
-        return;
-      }
-
-      const ext =
-        upload.name.split(".").pop() ||
-        (isVideo ? "mp4" : "jpg");
-
-      const path = `${user.id}/${crypto.randomUUID()}.${ext}`;
-
-      // --------------------------------
-      // Storageへアップロード
-      // --------------------------------
-
-      const { error: upErr } =
-        await supabase.storage
-          .from("chat-images")
-          .upload(
-            path,
-            upload,
-            {
-              contentType: upload.type,
-            },
-          );
-
-      if (upErr) {
-        toast.error(
-          "アップロードできませんでした",
-        );
-
-        return;
-      }
-
-      // --------------------------------
-      // 楽観表示
-      // --------------------------------
-
-      const optimistic: GroupMessage = {
-        id: crypto.randomUUID(),
-        group_id: groupId,
-        sender_id: user.id,
-        content: "",
-        image_url: path,
-        media_type: isVideo
-          ? "video"
-          : "image",
-        created_at:
-          new Date().toISOString(),
-      };
-
-      setMessages((prev) => [
-        ...prev,
-        optimistic,
-      ]);
-
-      broadcastMessage(optimistic);
-
-      // --------------------------------
-      // DB保存
-      // --------------------------------
-
-      const { error } =
-        await supabase
-          .from("group_messages")
-          .insert({
-            id: optimistic.id,
-            group_id: groupId,
-            sender_id: user.id,
-            content: "",
-            image_url: path,
-            media_type: isVideo
-              ? "video"
-              : "image",
-          });
-
-      if (error) {
-        setMessages((prev) =>
-          prev.filter(
-            (x) => x.id !== optimistic.id,
-          ),
-        );
-
-        toast.error(
-          "送信できませんでした",
-        );
-      }
-    } catch (err) {
-      console.error(
-        "media upload error:",
-        err,
+      toast.error(
+        `${isVideo ? "動画" : "画像"}は${limit}MBまでです`,
       );
+
+      return;
+    }
+
+    const ext =
+      upload.name.split(".").pop() ||
+      (isVideo ? "mp4" : "jpg");
+
+    const path = `${user.id}/${crypto.randomUUID()}.${ext}`;
+
+    const { error: upErr } = await supabase.storage
+      .from("chat-images")
+      .upload(path, upload, {
+        contentType: upload.type,
+      });
+
+    if (upErr) {
+      setUploading(false);
 
       toast.error(
         "アップロードできませんでした",
       );
-    } finally {
-      setUploading(false);
-    }
-  };
 
-  // ==============================
-  // メッセージ削除
-  // ==============================
+      return;
+    }
+
+    setUploading(false);
+
+    const optimistic: GroupMessage = {
+      id: crypto.randomUUID(),
+      group_id: groupId,
+      sender_id: user.id,
+      content: "",
+      image_url: path,
+      media_type: isVideo ? "video" : "image",
+      created_at: new Date().toISOString(),
+    };
+
+    setMessages((prev) => [
+      ...prev,
+      optimistic,
+    ]);
+
+    broadcastMessage(optimistic);
+
+    void supabase
+      .from("group_messages")
+      .insert({
+        id: optimistic.id,
+        group_id: groupId,
+        sender_id: user.id,
+        content: "",
+        image_url: path,
+        media_type: isVideo ? "video" : "image",
+      })
+      .then(({ error }) => {
+        if (error) {
+          setMessages((prev) =>
+            prev.filter(
+              (x) => x.id !== optimistic.id,
+            ),
+          );
+
+          toast.error("送信できませんでした");
+        }
+      });
+  };
 
   const handleDelete = async (
     m: GroupMessage,
   ) => {
-    const isOwn =
-      m.sender_id === user?.id;
+    const isOwn = m.sender_id === user?.id;
 
     const confirmMsg = isOwn
       ? "このメッセージを取り消します。元に戻せません。よろしいですか？"
       : "【管理者権限】このメッセージを削除します。参加者全員の画面から削除されます。よろしいですか？";
 
-    if (!window.confirm(confirmMsg)) {
-      return;
-    }
+    if (!window.confirm(confirmMsg)) return;
 
     try {
       await deleteGroupMessage({
@@ -823,10 +736,6 @@ function GroupChatPage() {
     ? "/open"
     : "/groups";
 
-  // ==============================
-  // 退出
-  // ==============================
-
   const leave = async () => {
     if (!user || isOwner) return;
 
@@ -837,9 +746,7 @@ function GroupChatPage() {
       .eq("user_id", user.id);
 
     if (error) {
-      toast.error(
-        "退出できませんでした",
-      );
+      toast.error("退出できませんでした");
       return;
     }
 
@@ -860,10 +767,6 @@ function GroupChatPage() {
     });
   };
 
-  // ==============================
-  // グループ削除
-  // ==============================
-
   const deleteGroup = async () => {
     if (!user || !isOwner) return;
 
@@ -873,9 +776,7 @@ function GroupChatPage() {
       .eq("id", groupId);
 
     if (error) {
-      toast.error(
-        "削除できませんでした",
-      );
+      toast.error("削除できませんでした");
       return;
     }
 
@@ -937,8 +838,7 @@ function GroupChatPage() {
             {group?.is_open
               ? "オープンチャット・"
               : ""}
-            メンバー{" "}
-            {members.length} 人
+            メンバー {members.length} 人
           </span>
         </span>
 
@@ -1053,7 +953,6 @@ function GroupChatPage() {
                     ? "ビデオ"
                     : "音声"}
                   通話を開始・
-
                   <span className="text-primary">
                     参加する
                   </span>
@@ -1077,13 +976,14 @@ function GroupChatPage() {
                 )
               : null;
 
-          const parentSender = parent
-            ? members.find(
-                (p) =>
-                  p.id ===
-                  parent.sender_id,
-              )
-            : null;
+          const parentSender =
+            parent
+              ? members.find(
+                  (p) =>
+                    p.id ===
+                    parent.sender_id,
+                )
+              : null;
 
           const replyCount =
             messages.filter(
@@ -1135,104 +1035,109 @@ function GroupChatPage() {
                     : "items-start",
                 )}
               >
-                {!mine && sender && (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger
-                      asChild
-                    >
-                      <button
-                        type="button"
-                        className="mb-0.5 block text-left text-[11px] text-foreground/60"
+                {!mine &&
+                  sender && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        asChild
                       >
-                        {sender.display_name}
+                        <button
+                          type="button"
+                          className="mb-0.5 block text-left text-[11px] text-foreground/60"
+                        >
+                          {
+                            sender.display_name
+                          }
 
-                        <span className="ml-1 font-mono text-[9px] text-foreground/40">
-                          ID:
+                          <span className="ml-1 font-mono text-[9px] text-foreground/40">
+                            ID:
+                            {
+                              sender.friend_code
+                            }
+                          </span>
+                        </button>
+                      </DropdownMenuTrigger>
+
+                      <DropdownMenuContent align="start">
+                        <DropdownMenuLabel className="font-mono text-[11px]">
+                          ID:{" "}
                           {
                             sender.friend_code
                           }
-                        </span>
-                      </button>
-                    </DropdownMenuTrigger>
+                        </DropdownMenuLabel>
 
-                    <DropdownMenuContent align="start">
-                      <DropdownMenuLabel className="font-mono text-[11px]">
-                        ID:{" "}
-                        {
-                          sender.friend_code
-                        }
-                      </DropdownMenuLabel>
+                        <DropdownMenuSeparator />
 
-                      <DropdownMenuSeparator />
-
-                      <DropdownMenuItem
-                        onSelect={async () => {
-                          if (
-                            isBlocked(
-                              sender.id,
+                        <DropdownMenuItem
+                          onSelect={async () => {
+                            if (
+                              isBlocked(
+                                sender.id,
+                              )
                             )
-                          ) {
-                            return;
-                          }
+                              return;
 
-                          if (
-                            await block(
-                              sender.id,
-                            )
-                          ) {
-                            toast.success(
-                              "ブロックしました",
-                            );
-                          }
-                        }}
-                      >
-                        <Ban className="mr-2 size-4" />
-
-                        {isBlocked(
-                          sender.id,
-                        )
-                          ? "ブロック中"
-                          : "この人をブロック"}
-                      </DropdownMenuItem>
-
-                      <ReportDialog
-                        targetId={
-                          sender.id
-                        }
-                        targetName={
-                          sender.display_name
-                        }
-                        targetCode={
-                          sender.friend_code
-                        }
-                        context="group"
-                        groupId={groupId}
-                        trigger={
-                          <DropdownMenuItem
-                            onSelect={(e) =>
-                              e.preventDefault()
+                            if (
+                              await block(
+                                sender.id,
+                              )
+                            ) {
+                              toast.success(
+                                "ブロックしました",
+                              );
                             }
-                          >
-                            <Flag className="mr-2 size-4" />
-                            この人を通報
-                          </DropdownMenuItem>
-                        }
-                      />
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                )}
+                          }}
+                        >
+                          <Ban className="mr-2 size-4" />
 
-                {!mine && !sender && (
-                  <p className="mb-0.5 text-[11px] text-foreground/60">
-                    メンバー
-                  </p>
-                )}
+                          {isBlocked(
+                            sender.id,
+                          )
+                            ? "ブロック中"
+                            : "この人をブロック"}
+                        </DropdownMenuItem>
+
+                        <ReportDialog
+                          targetId={
+                            sender.id
+                          }
+                          targetName={
+                            sender.display_name
+                          }
+                          targetCode={
+                            sender.friend_code
+                          }
+                          context="group"
+                          groupId={groupId}
+                          trigger={
+                            <DropdownMenuItem
+                              onSelect={(e) =>
+                                e.preventDefault()
+                              }
+                            >
+                              <Flag className="mr-2 size-4" />
+                              この人を通報
+                            </DropdownMenuItem>
+                          }
+                        />
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  )}
+
+                {!mine &&
+                  !sender && (
+                    <p className="mb-0.5 text-[11px] text-foreground/60">
+                      メンバー
+                    </p>
+                  )}
 
                 {parent && (
                   <button
                     type="button"
                     onClick={() =>
-                      jumpTo(parent.id)
+                      jumpTo(
+                        parent.id,
+                      )
                     }
                     className={cn(
                       "mb-1 block w-full max-w-full rounded-xl border-l-2 border-primary/60 bg-background/70 px-2.5 py-1.5 text-left",
@@ -1292,7 +1197,8 @@ function GroupChatPage() {
                         "text-right",
                     )}
                   >
-                    返信 {replyCount} 件
+                    返信{" "}
+                    {replyCount} 件
                   </p>
                 )}
               </div>
@@ -1327,7 +1233,8 @@ function GroupChatPage() {
                 <Reply className="size-3.5" />
               </button>
 
-              {(mine || isOwner) && (
+              {(mine ||
+                isOwner) && (
                 <button
                   type="button"
                   aria-label={
@@ -1432,7 +1339,6 @@ function GroupChatPage() {
           }
           placeholder="メッセージを入力"
           className="rounded-full"
-          maxLength={500}
         />
 
         <Button
@@ -1440,10 +1346,6 @@ function GroupChatPage() {
           size="icon"
           className="rounded-full"
           aria-label="送信"
-          disabled={
-            uploading ||
-            !text.trim()
-          }
         >
           <Send className="size-4" />
         </Button>
@@ -1480,10 +1382,8 @@ function GroupSettingsDialog({
 
   const [friends, setFriends] =
     useState<Profile[]>([]);
-
   const [requests, setRequests] =
     useState<JoinRequest[]>([]);
-
   const [requesters, setRequesters] =
     useState<Record<string, Profile>>(
       {},
@@ -1498,7 +1398,8 @@ function GroupSettingsDialog({
       group?.description ?? "",
     );
     setApproval(
-      group?.requires_approval ?? true,
+      group?.requires_approval ??
+        true,
     );
   }, [
     group?.name,
@@ -1511,16 +1412,18 @@ function GroupSettingsDialog({
       !open ||
       !user ||
       isOpenRoom
-    ) {
+    )
       return;
-    }
 
     void (async () => {
       const { data: rows } =
         await supabase
           .from("friendships")
           .select("friend_id")
-          .eq("user_id", user.id);
+          .eq(
+            "user_id",
+            user.id,
+          );
 
       const ids = (rows ?? []).map(
         (r) => r.friend_id,
@@ -1561,11 +1464,20 @@ function GroupSettingsDialog({
         await supabase
           .from("group_join_requests")
           .select("*")
-          .eq("group_id", groupId)
-          .eq("status", "pending")
-          .order("created_at", {
-            ascending: true,
-          })
+          .eq(
+            "group_id",
+            groupId,
+          )
+          .eq(
+            "status",
+            "pending",
+          )
+          .order(
+            "created_at",
+            {
+              ascending: true,
+            },
+          )
           .limit(100);
 
       const list =
@@ -1597,10 +1509,8 @@ function GroupSettingsDialog({
         Profile
       > = {};
 
-      for (
-        const p of (profs ??
-          []) as Profile[]
-      ) {
+      for (const p of (profs ??
+        []) as Profile[]) {
         map[p.id] = p;
       }
 
@@ -1615,14 +1525,18 @@ function GroupSettingsDialog({
     if (open) {
       void loadRequests();
     }
-  }, [open, loadRequests]);
+  }, [
+    open,
+    loadRequests,
+  ]);
 
   const saveRoom = async () => {
     if (!isOwner) return;
 
-    const trimmed = maskProfanity(
-      name.trim(),
-    );
+    const trimmed =
+      maskProfanity(
+        name.trim(),
+      );
 
     if (!trimmed) return;
 
@@ -1657,7 +1571,9 @@ function GroupSettingsDialog({
 
     toast.success("保存しました");
 
-    onChanged(data as Group);
+    onChanged(
+      data as Group,
+    );
   };
 
   const review = async (
@@ -1668,7 +1584,8 @@ function GroupSettingsDialog({
       await supabase.rpc(
         "approve_join_request",
         {
-          _request_id: request.id,
+          _request_id:
+            request.id,
           _approve: approve,
         },
       );
@@ -1680,7 +1597,6 @@ function GroupSettingsDialog({
           "",
         ),
       );
-
       return;
     }
 
@@ -1691,6 +1607,7 @@ function GroupSettingsDialog({
     );
 
     void loadRequests();
+
     onChanged();
   };
 
@@ -1725,16 +1642,21 @@ function GroupSettingsDialog({
     if (
       !isOwner ||
       id === group?.owner_id
-    ) {
+    )
       return;
-    }
 
     const { error } =
       await supabase
         .from("group_members")
         .delete()
-        .eq("group_id", groupId)
-        .eq("user_id", id);
+        .eq(
+          "group_id",
+          groupId,
+        )
+        .eq(
+          "user_id",
+          id,
+        );
 
     if (error) {
       toast.error(
@@ -1901,7 +1823,9 @@ function GroupSettingsDialog({
 
                       return (
                         <li
-                          key={req.id}
+                          key={
+                            req.id
+                          }
                           className="flex items-center gap-2 px-3 py-2"
                         >
                           <Avatar className="size-8">
@@ -2078,9 +2002,7 @@ function GroupSettingsDialog({
                       </Avatar>
 
                       <span className="min-w-0 flex-1 truncate text-sm">
-                        {
-                          f.display_name
-                        }
+                        {f.display_name}
                       </span>
 
                       <Button
