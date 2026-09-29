@@ -1,7 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { Ban, EyeOff, KeyRound, RefreshCw, Search, ShieldCheck, Trash2 } from "lucide-react";
+import {
+  Ban,
+  EyeOff,
+  KeyRound,
+  Megaphone,
+  MessageSquare,
+  RefreshCw,
+  Search,
+  ShieldCheck,
+  Trash2,
+  Users,
+} from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -10,10 +21,12 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { formatListTime, initials, type Profile } from "@/lib/rine";
 import {
+  adminBroadcastToOpenGroups,
   adminClearGroupMessages,
   adminDeleteGroup,
   adminDeleteMessage,
@@ -38,10 +51,10 @@ export const Route = createFileRoute("/admin")({
       {
         name: "description",
         content:
-          "RINE の管理者パネル。通報の確認、ユーザーの検索、利用停止、権限の管理をまとめて行えます。",
+          "RINE の管理者パネル。通報対応・ユーザー管理・荒らし投稿削除・ルーム管理・一斉アナウンスをまとめて行えます。",
       },
       { property: "og:title", content: "管理者パネル｜RINE" },
-      { property: "og:description", content: "通報対応・利用停止・権限管理。" },
+      { property: "og:description", content: "通報対応・利用停止・投稿削除・アナウンス配信。" },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
     ],
@@ -79,15 +92,25 @@ function AdminPage() {
   const [busy, setBusy] = useState(false);
 
   const [reports, setReports] = useState<Report[]>([]);
+  const [reportFilter, setReportFilter] = useState<"all" | "open" | "reviewing" | "resolved">("all");
   const [profiles, setProfiles] = useState<Record<string, Profile>>({});
+
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [query, setQuery] = useState("");
+  const [userFilter, setUserFilter] = useState<"all" | "banned" | "admin">("all");
+
   const [stats, setStats] = useState<Awaited<ReturnType<typeof adminStats>> | null>(null);
+
   const [groups, setGroups] = useState<AdminGroup[]>([]);
   const [groupQuery, setGroupQuery] = useState("");
   const [openOnly, setOpenOnly] = useState(true);
+
   const [messages, setMessages] = useState<AdminMessage[]>([]);
   const [msgQuery, setMsgQuery] = useState("");
+  const [msgLoading, setMsgLoading] = useState(false);
+
+  const [announcement, setAnnouncement] = useState("");
+  const [sendingAnnounce, setSendingAnnounce] = useState(false);
 
   const unlock = useServerFn(unlockAdmin);
   const listUsers = useServerFn(adminListUsers);
@@ -101,6 +124,7 @@ function AdminPage() {
   const clearGroupMessages = useServerFn(adminClearGroupMessages);
   const searchMessages = useServerFn(adminSearchMessages);
   const removeMessage = useServerFn(adminDeleteMessage);
+  const broadcastAnnouncement = useServerFn(adminBroadcastToOpenGroups);
 
   const loadReports = useCallback(async () => {
     const { data } = await supabase
@@ -140,14 +164,30 @@ function AdminPage() {
     [listGroups],
   );
 
+  const loadMessages = useCallback(
+    async (q: string) => {
+      setMsgLoading(true);
+      try {
+        const res = await searchMessages({ data: { q } });
+        setMessages(res);
+      } catch (e) {
+        toast.error(errorMessage(e));
+      } finally {
+        setMsgLoading(false);
+      }
+    },
+    [searchMessages],
+  );
+
   const loadAll = useCallback(async () => {
     await Promise.all([
       loadReports(),
       loadUsers(""),
       loadGroups("", true),
+      loadMessages(""),
       loadStats({}).then(setStats).catch(() => {}),
     ]);
-  }, [loadReports, loadUsers, loadGroups, loadStats]);
+  }, [loadReports, loadUsers, loadGroups, loadMessages, loadStats]);
 
   useEffect(() => {
     if (!user) return;
@@ -196,9 +236,9 @@ function AdminPage() {
       }
       return;
     }
-    const reason = prompt("停止の理由を入力してください", "利用規約違反");
+    const reason = prompt("停止の理由を入力してください", "利用規約違反・迷惑行為");
     if (reason === null) return;
-    const daysText = prompt("停止する日数（空欄なら無期限）", "3");
+    const daysText = prompt("停止する日数（空欄または0で無期限停止）", "7");
     if (daysText === null) return;
     const days = Number(daysText);
     try {
@@ -223,7 +263,7 @@ function AdminPage() {
   };
 
   const deleteGroup = async (g: AdminGroup) => {
-    if (!confirm(`ルーム「${g.name}」を削除しますか？投稿もすべて消えます（元に戻せません）`)) return;
+    if (!confirm(`ルーム「${g.name}」を完全に削除しますか？\n投稿やメンバーも消去されます（元に戻せません）`)) return;
     try {
       await removeGroup({ data: { groupId: g.id } });
       toast.success("ルームを削除しました");
@@ -254,13 +294,40 @@ function AdminPage() {
     }
   };
 
-  const deleteMessages = async (u: AdminUser) => {
-    if (!confirm(`${u.display_name} さんの投稿をすべて削除しますか？（元に戻せません）`)) return;
+  const deleteSingleMessage = async (msg: AdminMessage) => {
+    if (!confirm(`この投稿を削除しますか？\n「${msg.content.slice(0, 30)}...」`)) return;
     try {
-      await wipeMessages({ data: { userId: u.id } });
+      await removeMessage({ data: { kind: msg.kind, id: msg.id } });
       toast.success("投稿を削除しました");
+      setMessages((prev) => prev.filter((m) => m.id !== msg.id));
     } catch (e) {
       toast.error(errorMessage(e));
+    }
+  };
+
+  const deleteUserAllMessages = async (u: AdminUser) => {
+    if (!confirm(`${u.display_name} さんの投稿（個人トーク＋オプチャ）をすべて削除しますか？（元に戻せません）`)) return;
+    try {
+      await wipeMessages({ data: { userId: u.id } });
+      toast.success("投稿を全削除しました");
+    } catch (e) {
+      toast.error(errorMessage(e));
+    }
+  };
+
+  const handleSendAnnouncement = async () => {
+    const text = announcement.trim();
+    if (!text) return;
+    if (!confirm(`全オープンチャットへ以下のアナウンスを一斉配信しますか？\n\n${text}`)) return;
+    setSendingAnnounce(true);
+    try {
+      const res = await broadcastAnnouncement({ data: { content: text } });
+      toast.success(`${res.count} 件のオープンチャットへアナウンスを配信しました`);
+      setAnnouncement("");
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setSendingAnnounce(false);
     }
   };
 
@@ -287,300 +354,4 @@ function AdminPage() {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void submitPassword();
-              }}
-              placeholder="••••••••"
-            />
-          </div>
-          <Button
-            variant="brand"
-            size="pill"
-            className="w-full"
-            disabled={busy || password.length === 0}
-            onClick={() => void submitPassword()}
-          >
-            管理者として開く
-          </Button>
-        </div>
-      </AppShell>
-    );
-  }
-
-  return (
-    <AppShell
-      title="管理者パネル"
-      action={
-        <Button variant="ghost" size="sm" onClick={() => void loadAll()}>
-          <RefreshCw className="size-4" />
-        </Button>
-      }
-    >
-      <Tabs defaultValue="dashboard" className="w-full">
-        <TabsList className="mx-5 mt-4 grid w-[calc(100%-2.5rem)] grid-cols-4">
-          <TabsTrigger value="dashboard">概要</TabsTrigger>
-          <TabsTrigger value="reports">通報</TabsTrigger>
-          <TabsTrigger value="users">ユーザー</TabsTrigger>
-          <TabsTrigger value="rooms">ルーム</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="dashboard" className="px-5 py-4">
-          {!stats ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">読み込み中…</p>
-          ) : (
-            <div className="grid grid-cols-2 gap-3">
-              {[
-                { label: "ユーザー数", value: stats.users },
-                { label: "グループ数", value: stats.groups },
-                { label: "公開ルーム", value: stats.openGroups },
-                { label: "総メッセージ", value: stats.messages },
-                { label: "24時間の投稿", value: stats.todayMessages },
-                { label: "未対応の通報", value: stats.openReports },
-                { label: "利用停止中", value: stats.bans },
-              ].map((c) => (
-                <div
-                  key={c.label}
-                  className="rounded-2xl border border-border bg-card p-4 shadow-soft"
-                >
-                  <p className="text-xs text-muted-foreground">{c.label}</p>
-                  <p className="mt-1 text-2xl font-bold">{c.value.toLocaleString()}</p>
-                </div>
-              ))}
-            </div>
-          )}
-        </TabsContent>
-
-        <TabsContent value="reports">
-          {reports.length === 0 ? (
-            <p className="px-6 py-16 text-center text-sm text-muted-foreground">
-              通報はありません。
-            </p>
-          ) : (
-            <ul className="divide-y divide-border">
-              {reports.map((r) => {
-                const reported = profiles[r.reported_id];
-                const reporter = profiles[r.reporter_id];
-                return (
-                  <li key={r.id} className="space-y-2 px-5 py-4">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="truncate font-semibold">
-                          {reported?.display_name ?? "不明なユーザー"}
-                          <span className="ml-2 font-mono text-[11px] text-muted-foreground">
-                            ID:{r.reported_code ?? reported?.friend_code ?? "????"}
-                          </span>
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          通報者: {reporter?.display_name ?? "不明"}・
-                          {r.context === "group" ? "グループ内" : "個別トーク"}・
-                          {formatListTime(r.created_at)}
-                        </p>
-                      </div>
-                      <Badge variant={r.status === "resolved" ? "secondary" : "destructive"}>
-                        {STATUS_LABEL[r.status] ?? r.status}
-                      </Badge>
-                    </div>
-                    <p className="text-sm">
-                      <span className="font-medium">{r.reason}</span>
-                      {r.detail && <span className="block text-muted-foreground">{r.detail}</span>}
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      {["open", "reviewing", "resolved"].map((s) => (
-                        <Button
-                          key={s}
-                          size="sm"
-                          variant={r.status === s ? "default" : "outline"}
-                          onClick={() => void setStatus(r.id, s)}
-                        >
-                          {STATUS_LABEL[s]}
-                        </Button>
-                      ))}
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        onClick={() => {
-                          const target =
-                            users.find((u) => u.id === r.reported_id) ??
-                            ({
-                              id: r.reported_id,
-                              display_name: reported?.display_name ?? "このユーザー",
-                              banned: false,
-                            } as AdminUser);
-                          void toggleBan(target);
-                        }}
-                      >
-                        <Ban className="mr-1 size-4" />
-                        利用停止
-                      </Button>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </TabsContent>
-
-        <TabsContent value="users" className="space-y-3 px-5 py-4">
-          <div className="flex gap-2">
-            <Input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void loadUsers(query);
-              }}
-              placeholder="名前・ユーザー名・フレンドIDで検索"
-            />
-            <Button variant="outline" onClick={() => void loadUsers(query)}>
-              <Search className="size-4" />
-            </Button>
-          </div>
-
-          {users.length === 0 && (
-            <p className="py-10 text-center text-sm text-muted-foreground">
-              ユーザーが見つかりません。
-            </p>
-          )}
-
-          <ul className="divide-y divide-border">
-            {users.map((u) => (
-              <li key={u.id} className="space-y-2 py-3">
-                <div className="flex items-center gap-3">
-                  <Avatar className="size-10">
-                    <AvatarImage src={u.avatar_url ?? undefined} alt={u.display_name} />
-                    <AvatarFallback>{initials(u.display_name)}</AvatarFallback>
-                  </Avatar>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate font-semibold">
-                      {u.display_name}
-                      {u.role && (
-                        <Badge variant="secondary" className="ml-2">
-                          {u.role === "admin" ? "管理者" : "モデレーター"}
-                        </Badge>
-                      )}
-                      {u.banned && (
-                        <Badge variant="destructive" className="ml-2">
-                          停止中
-                        </Badge>
-                      )}
-                    </p>
-                    <p className="font-mono text-[11px] text-muted-foreground">
-                      ID:{u.friend_code}・登録 {formatListTime(u.created_at)}
-                    </p>
-                    {u.banned && u.ban_reason && (
-                      <p className="text-xs text-destructive">
-                        理由: {u.ban_reason}
-                        {u.ban_until ? `（${formatListTime(u.ban_until)}まで）` : "（無期限）"}
-                      </p>
-                    )}
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button size="sm" variant={u.banned ? "outline" : "destructive"} onClick={() => void toggleBan(u)}>
-                    <Ban className="mr-1 size-4" />
-                    {u.banned ? "停止を解除" : "利用停止"}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => void changeRole(u, u.role === "admin" ? null : "admin")}
-                  >
-                    <ShieldCheck className="mr-1 size-4" />
-                    {u.role === "admin" ? "管理者を外す" : "管理者にする"}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => void changeRole(u, u.role === "moderator" ? null : "moderator")}
-                  >
-                    {u.role === "moderator" ? "モデレーターを外す" : "モデレーターにする"}
-                  </Button>
-                  <Button size="sm" variant="ghost" className="text-destructive" onClick={() => void deleteMessages(u)}>
-                    <Trash2 className="mr-1 size-4" />
-                    投稿を全削除
-                  </Button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </TabsContent>
-
-        <TabsContent value="rooms" className="space-y-3 px-5 py-4">
-          <div className="flex gap-2">
-            <Input
-              value={groupQuery}
-              onChange={(e) => setGroupQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void loadGroups(groupQuery, openOnly);
-              }}
-              placeholder="ルーム名・説明で検索"
-            />
-            <Button variant="outline" onClick={() => void loadGroups(groupQuery, openOnly)}>
-              <Search className="size-4" />
-            </Button>
-          </div>
-
-          <div className="flex gap-2">
-            {[
-              { label: "公開ルームのみ", only: true },
-              { label: "すべて", only: false },
-            ].map((f) => (
-              <Button
-                key={f.label}
-                size="sm"
-                variant={openOnly === f.only ? "default" : "outline"}
-                onClick={() => {
-                  setOpenOnly(f.only);
-                  void loadGroups(groupQuery, f.only);
-                }}
-              >
-                {f.label}
-              </Button>
-            ))}
-          </div>
-
-          {groups.length === 0 && (
-            <p className="py-10 text-center text-sm text-muted-foreground">
-              ルームが見つかりません。
-            </p>
-          )}
-
-          <ul className="divide-y divide-border">
-            {groups.map((g) => (
-              <li key={g.id} className="space-y-2 py-3">
-                <div className="min-w-0">
-                  <p className="truncate font-semibold">
-                    {g.name}
-                    <Badge variant={g.is_open ? "secondary" : "outline"} className="ml-2">
-                      {g.is_open ? "公開" : "非公開"}
-                    </Badge>
-                  </p>
-                  {g.description && (
-                    <p className="line-clamp-2 text-xs text-muted-foreground">{g.description}</p>
-                  )}
-                  <p className="text-[11px] text-muted-foreground">
-                    作成者: {g.owner_name}・{g.members}人・投稿{g.messages}件・
-                    {formatListTime(g.created_at)}
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button size="sm" variant="outline" onClick={() => void hideGroup(g)}>
-                    <EyeOff className="mr-1 size-4" />
-                    {g.is_open ? "非公開にする" : "公開する"}
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => void clearGroup(g)}>
-                    <Trash2 className="mr-1 size-4" />
-                    投稿を全削除
-                  </Button>
-                  <Button size="sm" variant="destructive" onClick={() => void deleteGroup(g)}>
-                    <Trash2 className="mr-1 size-4" />
-                    ルームを削除
-                  </Button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </TabsContent>
-      </Tabs>
-    </AppShell>
-  );
-}
+前の送信が途中で切れてしまいました。安全に貼り替えできるよう、**GitHubでの丸ごと置き換え用コードは次の返信で2ファイルを分けて最後まで出します**。まず `roadmap.md` に「管理者パネル強化」を追加してから、`admin.functions.ts` と `admin.tsx` を完全版で渡します。
