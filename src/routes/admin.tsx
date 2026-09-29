@@ -6,12 +6,10 @@ import {
   EyeOff,
   KeyRound,
   Megaphone,
-  MessageSquare,
   RefreshCw,
   Search,
   ShieldCheck,
   Trash2,
-  Users,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -305,11 +303,12 @@ function AdminPage() {
     }
   };
 
-  const deleteUserAllMessages = async (u: AdminUser) => {
-    if (!confirm(`${u.display_name} さんの投稿（個人トーク＋オプチャ）をすべて削除しますか？（元に戻せません）`)) return;
+  const deleteUserAllMessages = async (userId: string, displayName: string) => {
+    if (!confirm(`${displayName} さんの投稿（個人トーク＋オプチャ）をすべて削除しますか？（元に戻せません）`)) return;
     try {
-      await wipeMessages({ data: { userId: u.id } });
+      await wipeMessages({ data: { userId } });
       toast.success("投稿を全削除しました");
+      await loadMessages(msgQuery);
     } catch (e) {
       toast.error(errorMessage(e));
     }
@@ -354,4 +353,482 @@ function AdminPage() {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-前の送信が途中で切れてしまいました。安全に貼り替えできるよう、**GitHubでの丸ごと置き換え用コードは次の返信で2ファイルを分けて最後まで出します**。まず `roadmap.md` に「管理者パネル強化」を追加してから、`admin.functions.ts` と `admin.tsx` を完全版で渡します。
+              placeholder="管理者パスワード"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && password) void submitPassword();
+              }}
+            />
+          </div>
+          <Button
+            className="w-full"
+            onClick={() => void submitPassword()}
+            disabled={busy || !password.trim()}
+          >
+            {busy ? "確認中…" : "ロック解除"}
+          </Button>
+        </div>
+      </AppShell>
+    );
+  }
+
+  const filteredReports = reports.filter((r) => {
+    if (reportFilter === "all") return true;
+    return r.status === reportFilter;
+  });
+
+  const filteredUsers = users.filter((u) => {
+    if (userFilter === "banned") return u.banned;
+    if (userFilter === "admin") return u.role === "admin" || u.role === "moderator";
+    return true;
+  });
+
+  return (
+    <AppShell
+      title="管理者パネル"
+      headerAction={
+        <Button
+          variant="ghost"
+          size="sm"
+          className="gap-1.5 text-xs text-muted-foreground"
+          onClick={() => void loadAll()}
+        >
+          <RefreshCw className="size-3.5" />
+          更新
+        </Button>
+      }
+    >
+      <div className="mx-auto max-w-4xl space-y-6 p-4 sm:p-6">
+        <Tabs defaultValue="overview" className="w-full">
+          <TabsList className="grid w-full grid-cols-5 text-xs">
+            <TabsTrigger value="overview">概要</TabsTrigger>
+            <TabsTrigger value="reports" className="relative">
+              通報
+              {reports.filter((r) => r.status === "open").length > 0 && (
+                <span className="ml-1 rounded-full bg-destructive px-1.5 py-0.2 text-[10px] text-destructive-foreground">
+                  {reports.filter((r) => r.status === "open").length}
+                </span>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="users">ユーザー</TabsTrigger>
+            <TabsTrigger value="messages">投稿監視</TabsTrigger>
+            <TabsTrigger value="groups">ルーム</TabsTrigger>
+          </TabsList>
+
+          {/* 1. 概要タブ */}
+          <TabsContent value="overview" className="space-y-6 pt-4">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              <div className="rounded-xl border bg-card p-4">
+                <p className="text-xs text-muted-foreground">総ユーザー数</p>
+                <p className="mt-1 text-2xl font-bold">{stats?.users ?? 0}</p>
+              </div>
+              <div className="rounded-xl border bg-card p-4">
+                <p className="text-xs text-muted-foreground">ルーム数 (公開/全体)</p>
+                <p className="mt-1 text-2xl font-bold">
+                  {stats?.openGroups ?? 0}{" "}
+                  <span className="text-sm font-normal text-muted-foreground">
+                    / {stats?.groups ?? 0}
+                  </span>
+                </p>
+              </div>
+              <div className="rounded-xl border bg-card p-4">
+                <p className="text-xs text-muted-foreground">本日送信メッセージ</p>
+                <p className="mt-1 text-2xl font-bold">{stats?.todayMessages ?? 0}</p>
+              </div>
+              <div className="rounded-xl border bg-card p-4">
+                <p className="text-xs text-muted-foreground">累計メッセージ</p>
+                <p className="mt-1 text-2xl font-bold">{stats?.messages ?? 0}</p>
+              </div>
+              <div className="rounded-xl border bg-card p-4">
+                <p className="text-xs text-muted-foreground">未対応の通報</p>
+                <p className={`mt-1 text-2xl font-bold ${(stats?.openReports ?? 0) > 0 ? "text-destructive" : ""}`}>
+                  {stats?.openReports ?? 0}
+                </p>
+              </div>
+              <div className="rounded-xl border bg-card p-4">
+                <p className="text-xs text-muted-foreground">利用停止中ユーザー</p>
+                <p className="mt-1 text-2xl font-bold">{stats?.bans ?? 0}</p>
+              </div>
+            </div>
+
+            {/* 一斉アナウンス */}
+            <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-3">
+              <div className="flex items-center gap-2">
+                <Megaphone className="size-5 text-primary" />
+                <h3 className="font-semibold text-sm">全オープンチャットへの一斉アナウンス配信</h3>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                公開中のすべてのオープンチャットに「【📢 運営アナウンス】」として送信されます。
+              </p>
+              <Textarea
+                placeholder="重要なお知らせやメンテナンス予告を入力..."
+                rows={3}
+                value={announcement}
+                onChange={(e) => setAnnouncement(e.target.value)}
+              />
+              <div className="flex justify-end">
+                <Button
+                  size="sm"
+                  onClick={() => void handleSendAnnouncement()}
+                  disabled={sendingAnnounce || !announcement.trim()}
+                  className="gap-1.5"
+                >
+                  <Megaphone className="size-3.5" />
+                  {sendingAnnounce ? "配信中…" : "一斉配信する"}
+                </Button>
+              </div>
+            </div>
+          </TabsContent>
+
+          {/* 2. 通報タブ */}
+          <TabsContent value="reports" className="space-y-4 pt-4">
+            <div className="flex gap-1.5 border-b pb-2 text-xs">
+              {(["all", "open", "reviewing", "resolved"] as const).map((st) => (
+                <Button
+                  key={st}
+                  variant={reportFilter === st ? "default" : "ghost"}
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => setReportFilter(st)}
+                >
+                  {st === "all" ? "すべて" : STATUS_LABEL[st]}
+                  {st === "open" && reports.filter((r) => r.status === "open").length > 0 && (
+                    <span className="ml-1 text-[10px]">({reports.filter((r) => r.status === "open").length})</span>
+                  )}
+                </Button>
+              ))}
+            </div>
+
+            {filteredReports.length === 0 ? (
+              <p className="py-12 text-center text-sm text-muted-foreground">該当する通報はありません</p>
+            ) : (
+              <div className="space-y-3">
+                {filteredReports.map((r) => {
+                  const reporter = profiles[r.reporter_id];
+                  const reported = profiles[r.reported_id];
+                  return (
+                    <div key={r.id} className="rounded-xl border bg-card p-4 space-y-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <Badge
+                              variant={
+                                r.status === "open"
+                                  ? "destructive"
+                                  : r.status === "reviewing"
+                                  ? "secondary"
+                                  : "outline"
+                              }
+                            >
+                              {STATUS_LABEL[r.status] ?? r.status}
+                            </Badge>
+                            <span className="text-xs text-muted-foreground">{formatListTime(r.created_at)}</span>
+                          </div>
+                          <p className="text-sm font-semibold">理由: {r.reason}</p>
+                        </div>
+                        <div className="flex gap-1">
+                          {(["open", "reviewing", "resolved"] as const).map((st) => (
+                            <Button
+                              key={st}
+                              variant={r.status === st ? "secondary" : "ghost"}
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => void setStatus(r.id, st)}
+                            >
+                              {STATUS_LABEL[st]}
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="rounded-lg bg-muted/50 p-2.5 text-xs space-y-1">
+                        <p><span className="text-muted-foreground">通報者:</span> {reporter?.display_name ?? r.reporter_id}</p>
+                        <p><span className="text-muted-foreground">対象者:</span> <span className="font-semibold">{reported?.display_name ?? r.reported_id}</span> ({reported?.friend_code ?? r.reported_code ?? "ID不明"})</p>
+                        {r.detail && <p><span className="text-muted-foreground">詳細:</span> {r.detail}</p>}
+                        {r.context && <p><span className="text-muted-foreground">通報時の文脈:</span> {r.context}</p>}
+                      </div>
+
+                      <div className="flex flex-wrap gap-2 pt-1 border-t">
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          className="h-7 text-xs gap-1"
+                          onClick={() => {
+                            const u = users.find((x) => x.id === r.reported_id);
+                            if (u) {
+                              void toggleBan(u);
+                            } else {
+                              const days = prompt("停止する日数（空欄または0で無期限停止）", "7");
+                              if (days === null) return;
+                              void setBan({
+                                data: {
+                                  userId: r.reported_id,
+                                  banned: true,
+                                  reason: `通報対応 (${r.reason})`,
+                                  days: Number(days) || 0,
+                                },
+                              }).then(() => toast.success("対象者を停止しました"));
+                            }
+                          }}
+                        >
+                          <Ban className="size-3" />
+                          対象者を停止
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-xs gap-1 text-destructive hover:bg-destructive/10"
+                          onClick={() => void deleteUserAllMessages(r.reported_id, reported?.display_name ?? "対象者")}
+                        >
+                          <Trash2 className="size-3" />
+                          対象者の投稿を全削除
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </TabsContent>
+
+          {/* 3. ユーザー管理タブ */}
+          <TabsContent value="users" className="space-y-4 pt-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex gap-2 flex-1 max-w-sm">
+                <Input
+                  placeholder="名前・ID・フレンドコードで検索..."
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && void loadUsers(query)}
+                  className="h-8 text-xs"
+                />
+                <Button size="sm" className="h-8 px-3" onClick={() => void loadUsers(query)}>
+                  <Search className="size-3.5" />
+                </Button>
+              </div>
+              <div className="flex gap-1">
+                {(["all", "banned", "admin"] as const).map((f) => (
+                  <Button
+                    key={f}
+                    variant={userFilter === f ? "default" : "ghost"}
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => setUserFilter(f)}
+                  >
+                    {f === "all" ? "全員" : f === "banned" ? "停止中" : "管理者"}
+                  </Button>
+                ))}
+              </div>
+            </div>
+
+            {filteredUsers.length === 0 ? (
+              <p className="py-12 text-center text-sm text-muted-foreground">該当するユーザーはいません</p>
+            ) : (
+              <div className="space-y-2">
+                {filteredUsers.map((u) => (
+                  <div key={u.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border bg-card p-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Avatar className="size-10">
+                        {u.avatar_url && <AvatarImage src={u.avatar_url} />}
+                        <AvatarFallback>{initials(u.display_name)}</AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0 space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <p className="font-semibold text-sm truncate">{u.display_name}</p>
+                          {u.role && (
+                            <Badge variant={u.role === "admin" ? "default" : "secondary"} className="text-[10px]">
+                              {u.role === "admin" ? "管理者" : "モデレーター"}
+                            </Badge>
+                          )}
+                          {u.banned && (
+                            <Badge variant="destructive" className="text-[10px]">
+                              利用停止中
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground truncate">
+                          ID: {u.friend_code} {u.username ? `(@${u.username})` : ""} · 登録: {formatListTime(u.created_at)}
+                        </p>
+                        {u.banned && u.ban_reason && (
+                          <p className="text-xs text-destructive">
+                            理由: {u.ban_reason} {u.ban_until ? `(${new Date(u.ban_until).toLocaleDateString()}まで)` : "(無期限)"}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5 self-end sm:self-center">
+                      <Button
+                        variant={u.banned ? "outline" : "destructive"}
+                        size="sm"
+                        className="h-7 text-xs gap-1"
+                        onClick={() => void toggleBan(u)}
+                      >
+                        <Ban className="size-3" />
+                        {u.banned ? "解除" : "停止"}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs gap-1"
+                        onClick={() => {
+                          const nextRole = u.role === "admin" ? null : u.role === "moderator" ? "admin" : "moderator";
+                          void changeRole(u, nextRole);
+                        }}
+                      >
+                        <ShieldCheck className="size-3" />
+                        {u.role === "admin" ? "権限剥奪" : u.role === "moderator" ? "管理者に昇格" : "モデレーター"}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-xs text-destructive hover:bg-destructive/10"
+                        title="投稿全削除"
+                        onClick={() => void deleteUserAllMessages(u.id, u.display_name)}
+                      >
+                        <Trash2 className="size-3" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </TabsContent>
+
+          {/* 4. 投稿監視タブ */}
+          <TabsContent value="messages" className="space-y-4 pt-4">
+            <div className="flex gap-2 max-w-sm">
+              <Input
+                placeholder="本文で検索（荒らしキーワードなど）..."
+                value={msgQuery}
+                onChange={(e) => setMsgQuery(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && void loadMessages(msgQuery)}
+                className="h-8 text-xs"
+              />
+              <Button size="sm" className="h-8 px-3" onClick={() => void loadMessages(msgQuery)} disabled={msgLoading}>
+                <Search className="size-3.5" />
+              </Button>
+            </div>
+
+            {msgLoading ? (
+              <p className="py-12 text-center text-sm text-muted-foreground">検索中…</p>
+            ) : messages.length === 0 ? (
+              <p className="py-12 text-center text-sm text-muted-foreground">投稿が見つかりませんでした</p>
+            ) : (
+              <div className="space-y-2">
+                {messages.map((m) => (
+                  <div key={`${m.kind}-${m.id}`} className="flex items-start justify-between gap-3 rounded-xl border bg-card p-3">
+                    <div className="min-w-0 space-y-1">
+                      <div className="flex items-center gap-2">
+                        <Badge variant={m.kind === "group" ? "secondary" : "outline"} className="text-[10px]">
+                          {m.kind === "group" ? `オプチャ: ${m.group_name ?? "グループ"}` : "個人DM"}
+                        </Badge>
+                        <span className="font-semibold text-xs">{m.sender_name}</span>
+                        <span className="text-[10px] text-muted-foreground">{formatListTime(m.created_at)}</span>
+                      </div>
+                      <p className="text-xs break-words whitespace-pre-wrap">{m.content || "(テキストなし)"}</p>
+                      {m.media_type && (
+                        <p className="text-[10px] text-muted-foreground">📎 メディア: {m.media_type}</p>
+                      )}
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs text-destructive hover:bg-destructive/10 shrink-0"
+                      onClick={() => void deleteSingleMessage(m)}
+                    >
+                      <Trash2 className="size-3" />
+                      削除
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </TabsContent>
+
+          {/* 5. ルーム管理タブ */}
+          <TabsContent value="groups" className="space-y-4 pt-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex gap-2 flex-1 max-w-sm">
+                <Input
+                  placeholder="ルーム名で検索..."
+                  value={groupQuery}
+                  onChange={(e) => setGroupQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && void loadGroups(groupQuery, openOnly)}
+                  className="h-8 text-xs"
+                />
+                <Button size="sm" className="h-8 px-3" onClick={() => void loadGroups(groupQuery, openOnly)}>
+                  <Search className="size-3.5" />
+                </Button>
+              </div>
+              <Button
+                variant={openOnly ? "secondary" : "ghost"}
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => {
+                  const next = !openOnly;
+                  setOpenOnly(next);
+                  void loadGroups(groupQuery, next);
+                }}
+              >
+                {openOnly ? "公開中のみ表示" : "非公開含むすべて表示"}
+              </Button>
+            </div>
+
+            {groups.length === 0 ? (
+              <p className="py-12 text-center text-sm text-muted-foreground">ルームが見つかりませんでした</p>
+            ) : (
+              <div className="space-y-2">
+                {groups.map((g) => (
+                  <div key={g.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border bg-card p-3">
+                    <div className="min-w-0 space-y-1">
+                      <div className="flex items-center gap-2">
+                        <Badge variant={g.is_open ? "default" : "outline"} className="text-[10px]">
+                          {g.is_open ? "公開オプチャ" : "非公開"}
+                        </Badge>
+                        <p className="font-semibold text-sm truncate">{g.name}</p>
+                      </div>
+                      {g.description && <p className="text-xs text-muted-foreground truncate">{g.description}</p>}
+                      <p className="text-[10px] text-muted-foreground">
+                        オーナー: {g.owner_name} · メンバー: {g.members}人 · 投稿数: {g.messages}件 · 作成: {formatListTime(g.created_at)}
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5 self-end sm:self-center">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs gap-1"
+                        onClick={() => void hideGroup(g)}
+                      >
+                        <EyeOff className="size-3" />
+                        {g.is_open ? "非公開にする" : "公開する"}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs text-destructive hover:bg-destructive/10 gap-1"
+                        onClick={() => void clearGroup(g)}
+                      >
+                        <Trash2 className="size-3" />
+                        投稿全削除
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        className="h-7 text-xs gap-1"
+                        onClick={() => void deleteGroup(g)}
+                      >
+                        <Trash2 className="size-3" />
+                        ルーム削除
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </TabsContent>
+        </Tabs>
+      </div>
+    </AppShell>
+  );
+}
