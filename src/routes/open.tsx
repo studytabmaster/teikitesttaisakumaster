@@ -87,11 +87,20 @@ function OpenChatPage() {
   const [approval, setApproval] = useState(true);
 
 
-  const load = useCallback(async () => {
+    const load = useCallback(async () => {
     if (!user) return;
 
+    // 自分の参加中IDは常に取得して反映（インデックス検索なのでDB負荷ほぼゼロ・確実に入室中を表示）
+    const { data: memberships } = await supabase
+      .from("group_members")
+      .select("group_id")
+      .eq("user_id", user.id);
+
+    const joinedIds = (memberships ?? []).map((m) => m.group_id);
+    setMemberIds(joinedIds);
+
     const now = Date.now();
-    // 直近5分以内に取得済みならDBを読まずにキャッシュを使う（DBクレジット消費ゼロ）
+    // 直近5分以内に取得済みなら、重いオープンチャット全件取得はスキップしてキャッシュを利用
     if (cachedRooms && now - lastFetchTime < CACHE_TTL) {
       setRooms(cachedRooms);
       setCounts(cachedCounts);
@@ -99,12 +108,6 @@ function OpenChatPage() {
       return;
     }
 
-    const { data: memberships } = await supabase
-      .from("group_members")
-      .select("group_id")
-      .eq("user_id", user.id);
-
-    const joinedIds = (memberships ?? []).map((m) => m.group_id);
 
     const [{ data: openRooms }, { data: myJoinedRooms }, { data: reqs }] = await Promise.all([
       supabase
