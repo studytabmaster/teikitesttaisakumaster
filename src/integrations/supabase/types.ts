@@ -104,6 +104,30 @@ export type Database = {
         }
         Relationships: []
       }
+      friend_requests: {
+        Row: {
+          created_at: string
+          id: string
+          receiver_id: string
+          sender_id: string
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          receiver_id: string
+          sender_id: string
+          status?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          receiver_id?: string
+          sender_id?: string
+          status?: string
+        }
+        Relationships: []
+      }
       friendships: {
         Row: {
           created_at: string
@@ -503,6 +527,25 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      accept_friend_request: {
+        Args: { _request_id: string }
+        Returns: {
+          avatar_url: string | null
+          created_at: string
+          display_name: string
+          friend_code: string
+          id: string
+          status_message: string
+          updated_at: string
+          username: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "profiles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       add_friend_by_code: {
         Args: { _code: string }
         Returns: {
@@ -530,6 +573,7 @@ export type Database = {
         Args: { _days?: number; _reason?: string; _target_user_id: string }
         Returns: string
       }
+      cancel_friend_request: { Args: { _request_id: string }; Returns: boolean }
       cleanup_old_data: { Args: never; Returns: undefined }
       generate_friend_code: { Args: never; Returns: string }
       get_client_ip: { Args: never; Returns: string }
@@ -553,6 +597,45 @@ export type Database = {
       is_ip_banned: { Args: { _ip: string }; Returns: boolean }
       join_open_group: { Args: { _group_id: string }; Returns: undefined }
       open_group_member_count: { Args: { _group_id: string }; Returns: number }
+      reject_friend_request: { Args: { _request_id: string }; Returns: boolean }
+      send_friend_request_by_code: {
+        Args: { _code: string }
+        Returns: {
+          avatar_url: string | null
+          created_at: string
+          display_name: string
+          friend_code: string
+          id: string
+          status_message: string
+          updated_at: string
+          username: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "profiles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      send_friend_request_by_id: {
+        Args: { _target_id: string }
+        Returns: {
+          avatar_url: string | null
+          created_at: string
+          display_name: string
+          friend_code: string
+          id: string
+          status_message: string
+          updated_at: string
+          username: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "profiles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
     }
     Enums: {
       app_role: "admin" | "moderator" | "user"
