@@ -1006,26 +1006,23 @@ function GroupChatPage() {
               )}
             >
               {!mine && (
-                <Avatar className="size-7">
-                  <AvatarImage
-                    src={
-                      sender?.avatar_url ??
-                      undefined
-                    }
-                    alt={
-                      sender?.display_name ??
-                      ""
-                    }
-                  />
-
-                  <AvatarFallback className="text-[10px]">
-                    {initials(
-                      sender?.display_name ??
-                        "?",
-                    )}
-                  </AvatarFallback>
-                </Avatar>
+                <Link
+                  to="/friend/$friendId"
+                  params={{ friendId: sender?.id ?? "" }}
+                  className="transition-opacity hover:opacity-75"
+                >
+                  <Avatar className="size-7 cursor-pointer">
+                    <AvatarImage
+                      src={sender?.avatar_url ?? undefined}
+                      alt={sender?.display_name ?? ""}
+                    />
+                    <AvatarFallback className="text-[10px]">
+                      {initials(sender?.display_name ?? "?")}
+                    </AvatarFallback>
+                  </Avatar>
+                </Link>
               )}
+
 
               <div
                 className={cn(
