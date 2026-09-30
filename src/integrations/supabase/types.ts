@@ -29,6 +29,30 @@ export type Database = {
         }
         Relationships: []
       }
+      banned_ips: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          ip: string
+          reason: string
+          until: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          ip: string
+          reason?: string
+          until?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          ip?: string
+          reason?: string
+          until?: string | null
+        }
+        Relationships: []
+      }
       blocks: {
         Row: {
           blocked_id: string
@@ -435,6 +459,24 @@ export type Database = {
         }
         Relationships: []
       }
+      user_ips: {
+        Row: {
+          ip: string
+          last_seen_at: string
+          user_id: string
+        }
+        Insert: {
+          ip: string
+          last_seen_at?: string
+          user_id: string
+        }
+        Update: {
+          ip?: string
+          last_seen_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       user_roles: {
         Row: {
           created_at: string
@@ -484,8 +526,13 @@ export type Database = {
         Args: { _approve: boolean; _request_id: string }
         Returns: undefined
       }
+      ban_user_and_ip: {
+        Args: { _days?: number; _reason?: string; _target_user_id: string }
+        Returns: string
+      }
       cleanup_old_data: { Args: never; Returns: undefined }
       generate_friend_code: { Args: never; Returns: string }
+      get_client_ip: { Args: never; Returns: string }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -503,6 +550,7 @@ export type Database = {
         Args: { _group_id: string; _user_id: string }
         Returns: boolean
       }
+      is_ip_banned: { Args: { _ip: string }; Returns: boolean }
       join_open_group: { Args: { _group_id: string }; Returns: undefined }
       open_group_member_count: { Args: { _group_id: string }; Returns: number }
     }
