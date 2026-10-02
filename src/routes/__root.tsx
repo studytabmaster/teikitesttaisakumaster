@@ -220,7 +220,7 @@ export const Route =
     shellComponent: RootShell,
     component: RootComponent,
     notFoundComponent: NotFoundComponent,
-    errorComponent: ErrorComponent,
+    errorComponent: ErrorComponent as never,
   });
 
 function RootShell({ children }: { children: ReactNode }) {
