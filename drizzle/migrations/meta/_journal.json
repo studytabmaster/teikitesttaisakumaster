@@ -64,6 +64,13 @@
       "when": 1789983835296,
       "tag": "0008_admin_bans_and_moderation",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790984578962,
+      "tag": "0009_adult_rooms",
+      "breakpoints": true
     }
   ]
 }

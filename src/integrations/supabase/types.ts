@@ -305,6 +305,7 @@ export type Database = {
           created_at: string
           description: string
           id: string
+          is_adult: boolean
           is_open: boolean
           name: string
           owner_id: string
@@ -316,6 +317,7 @@ export type Database = {
           created_at?: string
           description?: string
           id?: string
+          is_adult?: boolean
           is_open?: boolean
           name?: string
           owner_id: string
@@ -327,6 +329,7 @@ export type Database = {
           created_at?: string
           description?: string
           id?: string
+          is_adult?: boolean
           is_open?: boolean
           name?: string
           owner_id?: string
@@ -381,7 +384,9 @@ export type Database = {
       }
       profiles: {
         Row: {
+          adult_verified_at: string | null
           avatar_url: string | null
+          birth_date: string | null
           created_at: string
           display_name: string
           friend_code: string
@@ -391,7 +396,9 @@ export type Database = {
           username: string | null
         }
         Insert: {
+          adult_verified_at?: string | null
           avatar_url?: string | null
+          birth_date?: string | null
           created_at?: string
           display_name?: string
           friend_code: string
@@ -401,7 +408,9 @@ export type Database = {
           username?: string | null
         }
         Update: {
+          adult_verified_at?: string | null
           avatar_url?: string | null
+          birth_date?: string | null
           created_at?: string
           display_name?: string
           friend_code?: string
@@ -530,7 +539,9 @@ export type Database = {
       accept_friend_request: {
         Args: { _request_id: string }
         Returns: {
+          adult_verified_at: string | null
           avatar_url: string | null
+          birth_date: string | null
           created_at: string
           display_name: string
           friend_code: string
@@ -549,7 +560,9 @@ export type Database = {
       add_friend_by_code: {
         Args: { _code: string }
         Returns: {
+          adult_verified_at: string | null
           avatar_url: string | null
+          birth_date: string | null
           created_at: string
           display_name: string
           friend_code: string
@@ -575,6 +588,7 @@ export type Database = {
       }
       cancel_friend_request: { Args: { _request_id: string }; Returns: boolean }
       cleanup_old_data: { Args: never; Returns: undefined }
+      confirm_adult: { Args: { _birth_date: string }; Returns: boolean }
       generate_friend_code: { Args: never; Returns: string }
       get_client_ip: { Args: never; Returns: string }
       has_role: {
@@ -584,6 +598,7 @@ export type Database = {
         }
         Returns: boolean
       }
+      is_adult_user: { Args: { _user_id: string }; Returns: boolean }
       is_banned: { Args: { _user_id: string }; Returns: boolean }
       is_blocked_pair: { Args: { _a: string; _b: string }; Returns: boolean }
       is_group_member: {
@@ -601,7 +616,9 @@ export type Database = {
       send_friend_request_by_code: {
         Args: { _code: string }
         Returns: {
+          adult_verified_at: string | null
           avatar_url: string | null
+          birth_date: string | null
           created_at: string
           display_name: string
           friend_code: string
@@ -620,7 +637,9 @@ export type Database = {
       send_friend_request_by_id: {
         Args: { _target_id: string }
         Returns: {
+          adult_verified_at: string | null
           avatar_url: string | null
+          birth_date: string | null
           created_at: string
           display_name: string
           friend_code: string

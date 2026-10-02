@@ -385,7 +385,7 @@ function AdminPage() {
   return (
     <AppShell
       title="管理者パネル"
-      headerAction={
+      action={
         <Button
           variant="ghost"
           size="sm"
