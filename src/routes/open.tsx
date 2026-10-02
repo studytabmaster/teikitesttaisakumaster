@@ -49,6 +49,7 @@ type OpenRoom = {
   avatar_url: string | null;
   owner_id: string;
   requires_approval: boolean;
+  is_adult?: boolean;
   created_at: string;
 };
 
@@ -85,6 +86,42 @@ function OpenChatPage() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [approval, setApproval] = useState(true);
+  const [adultRoom, setAdultRoom] = useState(false);
+  const [isAdult, setIsAdult] = useState(false);
+  const [pinkMode, setPinkMode] = useState(false);
+  const [verifyOpen, setVerifyOpen] = useState(false);
+  const [birth, setBirth] = useState("");
+  const [agree, setAgree] = useState(false);
+
+  useEffect(() => {
+    if (!user) return;
+    void supabase
+      .from("profiles")
+      .select("adult_verified_at")
+      .eq("id", user.id)
+      .maybeSingle()
+      .then(({ data }) => setIsAdult(!!data?.adult_verified_at));
+  }, [user]);
+
+  const verifyAge = async () => {
+    if (!birth || !agree) {
+      toast.error("生年月日を入力し、注意事項に同意してください");
+      return;
+    }
+    setBusy(true);
+    const { error } = await supabase.rpc("confirm_adult", { _birth_date: birth });
+    setBusy(false);
+    if (error) {
+      toast.error(error.message.replace(/^.*?:\s*/, ""));
+      return;
+    }
+    setIsAdult(true);
+    setVerifyOpen(false);
+    setPinkMode(true);
+    cachedRooms = null;
+    toast.success("年齢確認が完了しました");
+    void load();
+  };
 
 
     const load = useCallback(async () => {
@@ -112,14 +149,14 @@ function OpenChatPage() {
     const [{ data: openRooms }, { data: myJoinedRooms }, { data: reqs }] = await Promise.all([
       supabase
         .from("groups")
-        .select("id,name,description,avatar_url,owner_id,requires_approval,created_at")
+        .select("id,name,description,avatar_url,owner_id,requires_approval,is_adult,created_at")
         .eq("is_open", true)
         .order("created_at", { ascending: false })
         .limit(1000),
       joinedIds.length > 0
         ? supabase
             .from("groups")
-            .select("id,name,description,avatar_url,owner_id,requires_approval,created_at")
+            .select("id,name,description,avatar_url,owner_id,requires_approval,is_adult,created_at")
             .in("id", joinedIds)
             .eq("is_open", true)
         : Promise.resolve({ data: [] }),
@@ -170,12 +207,14 @@ function OpenChatPage() {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const base = rooms.filter((r) => !memberIds.includes(r.id));
+    const base = rooms.filter(
+      (r) => !memberIds.includes(r.id) && !!r.is_adult === (pinkMode && isAdult),
+    );
     if (!q) return base;
     return base.filter(
       (r) => r.name.toLowerCase().includes(q) || r.description.toLowerCase().includes(q),
     );
-  }, [rooms, memberIds, query]);
+  }, [rooms, memberIds, query, pinkMode, isAdult]);
 
   const joined = useMemo(() => rooms.filter((r) => memberIds.includes(r.id)), [rooms, memberIds]);
 
@@ -238,6 +277,7 @@ function OpenChatPage() {
         owner_id: user.id,
         is_open: true,
         requires_approval: approval,
+        is_adult: isAdult && adultRoom,
       })
       .select("id")
       .maybeSingle();
@@ -251,6 +291,8 @@ function OpenChatPage() {
     setCreateOpen(false);
     setName("");
     setDescription("");
+    setAdultRoom(false);
+    cachedRooms = null;
     toast.success("オープンチャットを作成しました");
     void load();
   };
@@ -309,6 +351,17 @@ function OpenChatPage() {
                 </div>
                 <Switch checked={approval} onCheckedChange={setApproval} />
               </div>
+              {isAdult && (
+                <div className="flex items-center justify-between rounded-2xl bg-muted/60 px-4 py-3">
+                  <div>
+                    <p className="text-sm font-semibold">🔞 ピンクチャンネルにする</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      年齢確認済みの18歳以上の人だけに表示されます
+                    </p>
+                  </div>
+                  <Switch checked={adultRoom} onCheckedChange={setAdultRoom} />
+                </div>
+              )}
               <Button variant="brand" size="pill" className="w-full" disabled={busy} onClick={create}>
                 作成する
               </Button>
@@ -337,6 +390,52 @@ function OpenChatPage() {
 
       {tab === "discover" && (
         <>
+          <div className="mx-4 mt-4 flex gap-2">
+            <Button
+              size="sm"
+              variant={!pinkMode ? "brand" : "outline"}
+              className="flex-1 rounded-full"
+              onClick={() => setPinkMode(false)}
+            >
+              通常ルーム
+            </Button>
+            <Button
+              size="sm"
+              variant={pinkMode ? "brand" : "outline"}
+              className="flex-1 rounded-full"
+              onClick={() => (isAdult ? setPinkMode(true) : setVerifyOpen(true))}
+            >
+              🔞 ピンクチャンネル
+            </Button>
+          </div>
+          <Dialog open={verifyOpen} onOpenChange={setVerifyOpen}>
+            <DialogContent className="rounded-3xl">
+              <DialogHeader>
+                <DialogTitle>🔞 年齢確認</DialogTitle>
+                <DialogDescription>
+                  ピンクチャンネルは18歳以上の方専用です。生年月日は一度登録すると変更できません。
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="birth">生年月日</Label>
+                  <Input id="birth" type="date" value={birth} onChange={(e) => setBirth(e.target.value)} />
+                </div>
+                <ul className="list-disc space-y-1 rounded-2xl bg-muted/60 px-6 py-3 text-[11px] text-muted-foreground">
+                  <li>18歳未満の方の利用は禁止です。年齢を偽った場合はBANされます。</li>
+                  <li>未成年に関わる内容、無修正画像、売買春・出会いの勧誘、違法行為は禁止です。</li>
+                  <li>違反を見つけたら通報してください。</li>
+                </ul>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={agree} onChange={(e) => setAgree(e.target.checked)} />
+                  18歳以上であり、上記に同意します
+                </label>
+                <Button variant="brand" size="pill" className="w-full" disabled={busy} onClick={verifyAge}>
+                  確認する
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
           <div className="relative m-4">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -367,7 +466,10 @@ function OpenChatPage() {
                       </AvatarFallback>
                     </Avatar>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate font-semibold">{room.name}</p>
+                      <p className="truncate font-semibold">
+                        {room.is_adult && <span className="mr-1 text-destructive">🔞</span>}
+                        {room.name}
+                      </p>
                       <p className="truncate text-sm text-muted-foreground">
                         {room.description || "説明はまだありません"}
                       </p>
