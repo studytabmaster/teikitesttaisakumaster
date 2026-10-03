@@ -612,6 +612,13 @@ export type Database = {
       is_ip_banned: { Args: { _ip: string }; Returns: boolean }
       join_open_group: { Args: { _group_id: string }; Returns: undefined }
       open_group_member_count: { Args: { _group_id: string }; Returns: number }
+      open_group_member_counts: {
+        Args: { _group_ids: string[] }
+        Returns: {
+          group_id: string
+          member_count: number
+        }[]
+      }
       reject_friend_request: { Args: { _request_id: string }; Returns: boolean }
       send_friend_request_by_code: {
         Args: { _code: string }

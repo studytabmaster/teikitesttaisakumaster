@@ -71,6 +71,13 @@
       "when": 1790984578962,
       "tag": "0009_adult_rooms",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790989413259,
+      "tag": "0010_bulk_member_counts",
+      "breakpoints": true
     }
   ]
 }
