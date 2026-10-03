@@ -510,6 +510,30 @@ export type Database = {
         }
         Relationships: []
       }
+      user_mutes: {
+        Row: {
+          reason: string
+          strikes: number
+          until: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          reason?: string
+          strikes?: number
+          until: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          reason?: string
+          strikes?: number
+          until?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       user_roles: {
         Row: {
           created_at: string
@@ -577,6 +601,10 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      apply_strike: {
+        Args: { _reason: string; _uid: string }
+        Returns: undefined
       }
       approve_join_request: {
         Args: { _approve: boolean; _request_id: string }
@@ -662,6 +690,7 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      unmute_user: { Args: { _uid: string }; Returns: undefined }
     }
     Enums: {
       app_role: "admin" | "moderator" | "user"
