@@ -186,7 +186,34 @@ function ChatPage() {
       );
   }, [messages, user]);
 
+  // 過去分はボタンを押したときだけ読み込む（自動では取りに行かないのでコスト増なし）
+  const [hasOlder, setHasOlder] = useState(true);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const skipScrollRef = useRef(false);
+  const loadOlder = async () => {
+    if (!user || messages.length === 0) return;
+    setLoadingOlder(true);
+    const { data } = await supabase
+      .from("messages")
+      .select("*")
+      .or(
+        `and(sender_id.eq.${user.id},receiver_id.eq.${friendId}),and(sender_id.eq.${friendId},receiver_id.eq.${user.id})`,
+      )
+      .lt("created_at", messages[0]!.created_at)
+      .order("created_at", { ascending: false })
+      .limit(50);
+    const older = ((data ?? []) as Message[]).slice().reverse();
+    if (older.length < 50) setHasOlder(false);
+    skipScrollRef.current = true;
+    setMessages((prev) => [...older.filter((o) => !prev.some((p) => p.id === o.id)), ...prev]);
+    setLoadingOlder(false);
+  };
+
   useEffect(() => {
+    if (skipScrollRef.current) {
+      skipScrollRef.current = false;
+      return;
+    }
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
@@ -428,6 +455,13 @@ function ChatPage() {
           <p className="py-10 text-center text-sm text-foreground/50">
             メッセージを送ってトークを始めましょう
           </p>
+        )}
+        {hasOlder && messages.length >= 80 && (
+          <div className="flex justify-center">
+            <Button variant="outline" size="sm" disabled={loadingOlder} onClick={loadOlder}>
+              {loadingOlder ? "読み込み中…" : "過去のメッセージを見る"}
+            </Button>
+          </div>
         )}
         {messages.map((m) => {
           const mine = m.sender_id === user?.id;
