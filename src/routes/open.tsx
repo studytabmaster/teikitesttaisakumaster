@@ -137,14 +137,27 @@ function OpenChatPage() {
     setMemberIds(joinedIds);
 
     const now = Date.now();
-    // 直近5分以内に取得済みなら、重いオープンチャット全件取得はスキップしてキャッシュを利用
+    // 人数は参加・退出・削除ですぐ変わるので、毎回まとめて1回で最新を取得する
+    const fetchCounts = async (ids: string[]) => {
+      if (ids.length === 0) return {} as Record<string, number>;
+      const { data } = await supabase.rpc("open_group_member_counts", { _group_ids: ids });
+      const map: Record<string, number> = {};
+      for (const row of (data ?? []) as { group_id: string; member_count: number }[]) {
+        map[row.group_id] = row.member_count;
+      }
+      return map;
+    };
+
+    // ルーム一覧は5分キャッシュ（人数は毎回最新）
     if (cachedRooms && now - lastFetchTime < CACHE_TTL) {
       setRooms(cachedRooms);
       setCounts(cachedCounts);
       setLoading(false);
+      const fresh = await fetchCounts(cachedRooms.map((r) => r.id));
+      cachedCounts = fresh;
+      setCounts(fresh);
       return;
     }
-
 
     const [{ data: openRooms }, { data: myJoinedRooms }, { data: reqs }] = await Promise.all([
       supabase
@@ -176,21 +189,8 @@ function OpenChatPage() {
     const mineToReview = all.filter((r) => r.user_id !== user.id && r.status === "pending");
     setIncoming(mineToReview);
 
-    // 人数取得（上位40部屋＋参加中部屋に絞ってDB負荷を最小化）
-    const targetRooms = Array.from(new Set([...joinedIds, ...list.slice(0, 40).map((r) => r.id)]));
-    const entries = await Promise.all(
-      targetRooms.map(async (id) => {
-        try {
-          const { data } = await supabase.rpc("open_group_member_count", { _group_id: id });
-          return [id, (data as number | null) ?? 0] as const;
-        } catch {
-          return [id, 0] as const;
-        }
-      }),
-    );
-    const countMap = Object.fromEntries(entries);
+    const countMap = await fetchCounts(list.map((r) => r.id));
 
-    // キャッシュに保存
     cachedRooms = list;
     cachedCounts = countMap;
     lastFetchTime = now;
