@@ -37,6 +37,7 @@ import { enqueueMessage, getOutboxFor, onOutboxChange, type PendingMessage } fro
 import { pairChannelName } from "@/lib/realtime";
 import { compressImage } from "@/lib/compress";
 import { cn } from "@/lib/utils";
+import { uploadToCloudinary, isLateNightJST } from "@/lib/cloudinary";
 
 export const Route = createFileRoute("/chat/$friendId")({
   head: () => ({
@@ -69,6 +70,7 @@ function ChatPage() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const liveRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const lastSendTimeRef = useRef<number>(0);
 
   // 送った内容を相手の画面へ即座に届ける（DB 反映を待たない）
   const broadcastMessage = (m: Message) => {
@@ -226,6 +228,17 @@ function ChatPage() {
       toast.error("ブロック中の相手には送信できません");
       return;
     }
+
+    // 深夜帯（JST 1:00〜6:00）の連投制限（3秒間隔）
+    if (isLateNightJST()) {
+      const now = Date.now();
+      if (now - lastSendTimeRef.current < 3000) {
+        toast.error("深夜帯（1:00〜6:00）はサーバー負荷軽減のため3秒間隔で送信してください");
+        return;
+      }
+      lastSendTimeRef.current = now;
+    }
+
     setText("");
     const clean = maskProfanity(content);
     const parentId = replyTo?.id ?? null;
@@ -279,7 +292,7 @@ function ChatPage() {
       return;
     }
     setUploading(true);
-    // 画像はアップロード前に自動圧縮してストレージを節約
+    // 画像はアップロード前に自動圧縮してサイズを節約
     const upload = isVideo ? file : await compressImage(file);
     const limit = isVideo ? 10 : 5;
     if (upload.size > limit * 1024 * 1024) {
@@ -287,16 +300,17 @@ function ChatPage() {
       toast.error(`${isVideo ? "動画" : "画像"}は${limit}MBまでです`);
       return;
     }
-    const ext = upload.name.split(".").pop() || (isVideo ? "mp4" : "jpg");
-    const path = `${user.id}/${crypto.randomUUID()}.${ext}`;
-    const { error: upErr } = await supabase.storage
-      .from("chat-images")
-      .upload(path, upload, { contentType: upload.type, cacheControl: "31536000" });
-    if (upErr) {
+
+    // Cloudinaryに直接アップロード（Supabaseストレージの転送量を完全回避）
+    let path = "";
+    try {
+      path = await uploadToCloudinary(upload);
+    } catch {
       setUploading(false);
       toast.error("アップロードできませんでした");
       return;
     }
+
     const parentId = replyTo?.id ?? null;
     setReplyTo(null);
     const optimistic: Message = {
@@ -335,12 +349,14 @@ function ChatPage() {
 
   const unsend = async (m: Message) => {
     if (!window.confirm("このメッセージを完全に削除します。元に戻せません。よろしいですか？")) return;
-    // 先に画像・動画の実ファイルを消してから、メッセージ本体を削除する
+    // Supabaseストレージ保存の古い画像の場合のみStorage削除（Cloudinary URLはスキップ）
     if (m.image_url) {
-      const { error: fileError } = await supabase.storage.from("chat-images").remove([m.image_url]);
-      if (fileError) {
-        toast.error("ファイルを削除できませんでした");
-        return;
+      if (!m.image_url.startsWith("http://") && !m.image_url.startsWith("https://")) {
+        const { error: fileError } = await supabase.storage.from("chat-images").remove([m.image_url]);
+        if (fileError) {
+          toast.error("ファイルを削除できませんでした");
+          return;
+        }
       }
       forgetMediaUrl(m.image_url);
     }
@@ -356,8 +372,6 @@ function ChatPage() {
     void liveRef.current?.send({ type: "broadcast", event: "del", payload: { id: m.id } });
     toast.success("完全に削除しました");
   };
-
-
 
   if (loading) return null;
 
@@ -448,6 +462,7 @@ function ChatPage() {
             メッセージを送ってトークを始めましょう
           </p>
         )}
+
         {hasOlder && messages.length >= 80 && (
           <div className="flex justify-center">
             <Button variant="outline" size="sm" disabled={loadingOlder} onClick={loadOlder}>
@@ -577,68 +592,68 @@ function ChatPage() {
           </button>
         </div>
       ) : (
-      <>
-      {replyTo && (
-        <div className="flex items-center gap-2 border-t border-border bg-muted/60 px-3 py-2">
-          <Reply className="size-4 shrink-0 text-primary" />
-          <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-semibold text-primary">
-              {replyTo.sender_id === user?.id ? "自分の" : `${friend?.display_name ?? "相手"} さんの`}
-              メッセージに返信
-            </p>
-            <p className="truncate text-xs text-muted-foreground">
-              {replyTo.image_url
-                ? replyTo.media_type === "video"
-                  ? "動画"
-                  : "写真"
-                : replyTo.content}
-            </p>
-          </div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            aria-label="返信をやめる"
-            onClick={() => setReplyTo(null)}
+        <>
+          {replyTo && (
+            <div className="flex items-center gap-2 border-t border-border bg-muted/60 px-3 py-2">
+              <Reply className="size-4 shrink-0 text-primary" />
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] font-semibold text-primary">
+                  {replyTo.sender_id === user?.id ? "自分の" : `${friend?.display_name ?? "相手"} さんの`}
+                  メッセージに返信
+                </p>
+                <p className="truncate text-xs text-muted-foreground">
+                  {replyTo.image_url
+                    ? replyTo.media_type === "video"
+                      ? "動画"
+                      : "写真"
+                    : replyTo.content}
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="返信をやめる"
+                onClick={() => setReplyTo(null)}
+              >
+                <X className="size-4" />
+              </Button>
+            </div>
+          )}
+          <form
+            onSubmit={send}
+            className="flex items-center gap-2 border-t border-border bg-background px-3 py-3"
           >
-            <X className="size-4" />
-          </Button>
-        </div>
-      )}
-      <form
-        onSubmit={send}
-        className="flex items-center gap-2 border-t border-border bg-background px-3 py-3"
-      >
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/*,video/*"
-          className="hidden"
-          onChange={pickMedia}
-        />
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="rounded-full"
-          aria-label="画像・動画を送る"
-          disabled={uploading}
-          onClick={() => fileRef.current?.click()}
-        >
-          <ImagePlus className="size-5" />
-        </Button>
-        <Input
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="メッセージを入力"
-          className="rounded-full"
-        />
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*,video/*"
+              className="hidden"
+              onChange={pickMedia}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="rounded-full"
+              aria-label="画像・動画を送る"
+              disabled={uploading}
+              onClick={() => fileRef.current?.click()}
+            >
+              <ImagePlus className="size-5" />
+            </Button>
+            <Input
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="メッセージを入力"
+              className="rounded-full"
+            />
 
-        <Button type="submit" variant="brand" size="icon" className="rounded-full" aria-label="送信">
-          <Send className="size-4" />
-        </Button>
-      </form>
-      </>
+            <Button type="submit" variant="brand" size="icon" className="rounded-full" aria-label="送信">
+              <Send className="size-4" />
+            </Button>
+          </form>
+        </>
       )}
     </div>
   );
