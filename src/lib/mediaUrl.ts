@@ -45,8 +45,13 @@ function fresh(entry: Entry | undefined): entry is Entry {
   return !!entry && entry.expiresAt - REFRESH_MARGIN_MS > Date.now();
 }
 
-/** 署名付きURLを取得。メモリ+localStorageにキャッシュして無駄なAPI呼び出しを抑える。 */
+/** 署名付きURLを取得。外部URL（Cloudinary等）はそのまま返し、Supabase画像はキャッシュしてAPI呼び出しを抑える。 */
 export async function getMediaUrl(path: string): Promise<string | null> {
+  // Cloudinaryなど外部直URLの場合はそのまま返す
+  if (path.startsWith("http://") || path.startsWith("https://")) {
+    return path;
+  }
+
   const cached = memory.get(path) ?? getPersisted(path);
   if (fresh(cached)) {
     memory.set(path, cached);
