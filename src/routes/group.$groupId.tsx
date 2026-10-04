@@ -317,23 +317,7 @@ function GroupChatPage() {
           );
         },
       )
-      .on(
-        "postgres_changes",
-        {
-          event: "DELETE",
-          schema: "public",
-          table: "group_messages",
-        },
-        (payload) => {
-          const removed = payload.old as { id?: string };
-
-          if (!removed?.id) return;
-
-          setMessages((prev) =>
-            prev.filter((x) => x.id !== removed.id),
-          );
-        },
-      )
+      // 削除は直接通知（del）で反映。全ルーム分の削除通知は受け取らない
       .on(
         "postgres_changes",
         {
