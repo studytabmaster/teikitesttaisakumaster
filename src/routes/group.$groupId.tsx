@@ -173,6 +173,7 @@ function GroupChatPage() {
 
   // 送信後の短時間クールダウン。
   const blockedUntilRef = useRef(0);
+  const lastSendTimeRef = useRef(0);
 
   // 送った内容をメンバーの画面へ即座に届ける（DB反映を待たない）
   const broadcastMessage = (m: GroupMessage) => {
@@ -410,7 +411,7 @@ function GroupChatPage() {
         return;
       }
     }
-    const now = Date.now();
+   
 
     // 異常な高速連投による一時停止中
     if (now < blockedUntilRef.current) {
