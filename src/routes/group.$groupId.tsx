@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { uploadToCloudinary, isLateNightJST } from "@/lib/cloudinary";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
   ArrowLeft,
@@ -400,7 +401,15 @@ function GroupChatPage() {
       );
       return;
     }
+    const now = Date.now();
 
+    // 日本時間 深夜帯（1:00〜6:00）のレート制限
+    if (isLateNightJST()) {
+      if (now - (sendHistoryRef.current[sendHistoryRef.current.length - 1] || 0) < 3000) {
+        toast("深夜帯はサーバー保護のため、3秒間隔での送信になります");
+        return;
+      }
+    }
     const now = Date.now();
 
     // 異常な高速連投による一時停止中
@@ -591,27 +600,37 @@ function GroupChatPage() {
       return;
     }
 
-    const ext =
-      upload.name.split(".").pop() ||
-      (isVideo ? "mp4" : "jpg");
+    let finalUrl = "";
 
-    const path = `${user.id}/${crypto.randomUUID()}.${ext}`;
+    // 画像はCloudinaryへ直接アップロード（ストレージ転送量ゼロ）
+    if (!isVideo) {
+      const cUrl = await uploadToCloudinary(upload);
+      if (cUrl) {
+        finalUrl = cUrl;
+      }
+    }
 
-    const { error: upErr } = await supabase.storage
-      .from("chat-images")
-      .upload(path, upload, {
-        contentType: upload.type,
-        cacheControl: "31536000",
-      });
+    // Cloudinary未設定時または動画の場合は従来のストレージ
+    if (!finalUrl) {
+      const ext =
+        upload.name.split(".").pop() ||
+        (isVideo ? "mp4" : "jpg");
 
-    if (upErr) {
-      setUploading(false);
+      const path = `${user.id}/${crypto.randomUUID()}.${ext}`;
 
-      toast.error(
-        "アップロードできませんでした",
-      );
+      const { error: upErr } = await supabase.storage
+        .from("chat-images")
+        .upload(path, upload, {
+          contentType: upload.type,
+          cacheControl: "31536000",
+        });
 
-      return;
+      if (upErr) {
+        setUploading(false);
+        toast.error("アップロードできませんでした");
+        return;
+      }
+      finalUrl = path;
     }
 
     setUploading(false);
@@ -621,7 +640,7 @@ function GroupChatPage() {
       group_id: groupId,
       sender_id: user.id,
       content: "",
-      image_url: path,
+      image_url: finalUrl,
       media_type: isVideo ? "video" : "image",
       created_at: new Date().toISOString(),
     };
