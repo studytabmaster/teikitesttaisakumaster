@@ -138,13 +138,8 @@ function TalksPage() {
       // 自分宛て・自分発のメッセージだけ受け取る（全員分を受信しない）
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "messages", filter: `receiver_id=eq.${user.id}` },
+        { event: "INSERT", schema: "public", table: "messages", filter: `receiver_id=eq.${user.id}` },
         // 通知は Notifications が出すので、ここは一覧の更新だけ
-        scheduleLoad,
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "messages", filter: `sender_id=eq.${user.id}` },
         scheduleLoad,
       )
       // 自分の友だち行だけを購読

@@ -1,7 +1,7 @@
 // アップロード前に画像を自動圧縮してストレージと通信量を節約する。
 
-const MAX_EDGE = 1080;
-const QUALITY = 0.68;
+const MAX_EDGE = 960;
+const QUALITY = 0.62;
 
 function loadImage(file: File) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
@@ -49,8 +49,8 @@ export async function compressImage(file: File): Promise<File> {
   }
 }
 
-const AVATAR_EDGE = 256;
-const AVATAR_QUALITY = 0.72;
+const AVATAR_EDGE = 128;
+const AVATAR_QUALITY = 0.65;
 
 /**
  * アイコン用に正方形へ切り抜き、256px の JPEG データURLへ変換する。

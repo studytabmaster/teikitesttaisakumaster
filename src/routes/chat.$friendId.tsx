@@ -153,15 +153,7 @@ function ChatPage() {
           setMessages((prev) => prev.map((x) => (x.id === m.id ? { ...x, ...m } : x)));
         },
       )
-      .on(
-        "postgres_changes",
-        { event: "DELETE", schema: "public", table: "messages" },
-        (payload) => {
-          const removed = payload.old as { id?: string };
-          if (!removed?.id) return;
-          setMessages((prev) => prev.filter((x) => x.id !== removed.id));
-        },
-      )
+      // 削除は相手からの直接通知（del）で反映。全員分の削除通知は受け取らない
       .subscribe();
     liveRef.current = channel;
 
@@ -299,7 +291,7 @@ function ChatPage() {
     const path = `${user.id}/${crypto.randomUUID()}.${ext}`;
     const { error: upErr } = await supabase.storage
       .from("chat-images")
-      .upload(path, upload, { contentType: upload.type });
+      .upload(path, upload, { contentType: upload.type, cacheControl: "31536000" });
     if (upErr) {
       setUploading(false);
       toast.error("アップロードできませんでした");

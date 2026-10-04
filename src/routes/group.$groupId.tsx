@@ -617,6 +617,7 @@ function GroupChatPage() {
       .from("chat-images")
       .upload(path, upload, {
         contentType: upload.type,
+        cacheControl: "31536000",
       });
 
     if (upErr) {
