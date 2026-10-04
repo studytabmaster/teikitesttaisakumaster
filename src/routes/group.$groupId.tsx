@@ -660,7 +660,7 @@ function GroupChatPage() {
         group_id: groupId,
         sender_id: user.id,
         content: "",
-        image_url: path,
+        image_url: finalUrl, // ← finalUrl に変更
         media_type: isVideo ? "video" : "image",
       })
       .then(({ error }) => {
