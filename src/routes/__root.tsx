@@ -17,7 +17,7 @@ import { GroupCallProvider } from "@/components/GroupCallProvider";
 import { Notifications } from "@/components/Notifications";
 import { Toaster } from "@/components/ui/sonner";
 import { OfflineBanner } from "@/components/OfflineBanner";
-
+import { StealthProvider } from "@/components/StealthProvider";
 function AdMaxBanner({ id }: { id: string }) {
   return (
     <div className="relative w-[160px] h-[600px]">
@@ -247,8 +247,9 @@ function RootComponent() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <CallProvider>
+      <StealthProvider>
+        <AuthProvider>
+          <CallProvider>
           <GroupCallProvider>
             <Notifications />
 
@@ -295,8 +296,10 @@ function RootComponent() {
           </GroupCallProvider>
         </CallProvider>
       </AuthProvider>
+      </StealthProvider>
 
       <Toaster
+
         position="top-center"
         richColors
       />
