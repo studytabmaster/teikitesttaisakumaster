@@ -72,6 +72,7 @@ function OpenChatPage() {
   const { user } = useAuth();
   const [tab, setTab] = useState<Tab>("discover");
   const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<"new" | "popular">("new");
   const [rooms, setRooms] = useState<OpenRoom[]>([]);
   const [memberIds, setMemberIds] = useState<string[]>([]);
   const [myRequests, setMyRequests] = useState<JoinRequest[]>([]);
@@ -210,11 +211,17 @@ function OpenChatPage() {
     const base = rooms.filter(
       (r) => !memberIds.includes(r.id) && !!r.is_adult === (pinkMode && isAdult),
     );
-    if (!q) return base;
-    return base.filter(
-      (r) => r.name.toLowerCase().includes(q) || r.description.toLowerCase().includes(q),
+    const hit = q
+      ? base.filter(
+          (r) => r.name.toLowerCase().includes(q) || r.description.toLowerCase().includes(q),
+        )
+      : base;
+    const byNew = (a: OpenRoom, b: OpenRoom) =>
+      new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    return [...hit].sort((a, b) =>
+      sort === "popular" ? (counts[b.id] ?? 0) - (counts[a.id] ?? 0) || byNew(a, b) : byNew(a, b),
     );
-  }, [rooms, memberIds, query, pinkMode, isAdult]);
+  }, [rooms, memberIds, query, pinkMode, isAdult, sort, counts]);
 
   const joined = useMemo(() => rooms.filter((r) => memberIds.includes(r.id)), [rooms, memberIds]);
 
@@ -444,6 +451,28 @@ function OpenChatPage() {
               placeholder="ルーム名や説明で検索"
               className="rounded-full pl-9"
             />
+          </div>
+          <div className="mx-4 mb-2 flex gap-2">
+            {(
+              [
+                ["new", "新着順"],
+                ["popular", "人気順"],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setSort(key)}
+                className={cn(
+                  "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                  sort === key
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-border text-muted-foreground hover:bg-muted",
+                )}
+              >
+                {label}
+              </button>
+            ))}
           </div>
           {!loading && filtered.length === 0 ? (
             <div className="flex flex-col items-center gap-3 px-8 py-16 text-center">
