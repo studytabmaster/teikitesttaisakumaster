@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { initials } from "@/lib/rine";
 import { makeAvatarDataUrl } from "@/lib/compress";
+import { uploadToCloudinary } from "@/lib/cloudinary";
 import { maskProfanity } from "@/lib/profanity";
 
 export const Route = createFileRoute("/profile")({
@@ -54,7 +55,15 @@ function ProfilePage() {
     setBusy(true);
     try {
       const dataUrl = await makeAvatarDataUrl(file);
-      setAvatarUrl(dataUrl);
+      // 節約: 画像は外部（Cloudinary）に置き、短いURLだけ保存する。失敗時は従来どおり
+      let finalUrl = dataUrl;
+      try {
+        const blob = await (await fetch(dataUrl)).blob();
+        finalUrl = await uploadToCloudinary(blob);
+      } catch {
+        finalUrl = dataUrl;
+      }
+      setAvatarUrl(finalUrl);
       toast.success("アイコンを読み込みました。保存してください");
     } catch {
       toast.error("この画像は読み込めませんでした");
