@@ -61,6 +61,9 @@ export function Notifications() {
 
   // 節約: 画面を離れて10分たったら通知用の接続を休止し、戻ったら即再開する
   const [active, setActive] = useState(true);
+  // 接続が切れたときの自動再接続用（値が変わると購読をやり直す）
+  const [retryKey, setRetryKey] = useState(0);
+  const retryDelay = useRef(5000);
   useEffect(() => {
     let timer: number | undefined;
     const onVis = () => {
@@ -71,16 +74,32 @@ export function Notifications() {
         setActive(true);
       }
     };
+    const onOnline = () => setRetryKey((k) => k + 1);
     document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("online", onOnline);
     return () => {
       window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("online", onOnline);
     };
   }, []);
 
   useEffect(() => {
     if (!user || !active) return;
     let cancelled = false;
+    let retryTimer: number | undefined;
+    // 切断・エラー時は 5秒→10秒→…最大2分 の間隔で自動再接続（サーバーに負担をかけない）
+    const onStatus = (status: string) => {
+      if (cancelled) return;
+      if (status === "SUBSCRIBED") {
+        retryDelay.current = 5000;
+      } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+        window.clearTimeout(retryTimer);
+        const wait = retryDelay.current;
+        retryDelay.current = Math.min(wait * 2, 120000);
+        retryTimer = window.setTimeout(() => setRetryKey((k) => k + 1), wait);
+      }
+    };
     const myGroups = new Set<string>();
 
     // 通知対象は直近の20ルームまで（受信量を抑えてクラウド費用を節約）
@@ -168,7 +187,7 @@ export function Notifications() {
           }
         },
       )
-      .subscribe();
+      .subscribe(onStatus);
 
     // グループ・オープンチャットの新着（見える範囲は参加中のルームだけ＝データベース側で制限）
     // 1本の購読で、あとから参加したルームも自動で対象になる
@@ -229,14 +248,15 @@ export function Notifications() {
           }
         },
       )
-      .subscribe();
+      .subscribe(onStatus);
 
     return () => {
       cancelled = true;
+      window.clearTimeout(retryTimer);
       void supabase.removeChannel(channel);
       if (groupChannel) void supabase.removeChannel(groupChannel);
     };
-  }, [user, active]);
+  }, [user, active, retryKey]);
 
   return null;
 }
