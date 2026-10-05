@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   Ban,
   Check,
+  Link2,
   Flag,
   ImagePlus,
   LogOut,
@@ -1898,6 +1899,22 @@ function GroupSettingsDialog({
               )}
             </div>
           )}
+
+        <Button
+          type="button"
+          variant="outline"
+          className="w-full"
+          onClick={() => {
+            const url = group?.is_open
+              ? `${window.location.origin}/open?join=${groupId}`
+              : `${window.location.origin}/group/${groupId}`;
+            void navigator.clipboard.writeText(url);
+            toast.success("招待リンクをコピーしました");
+          }}
+        >
+          <Link2 className="mr-2 size-4" />
+          招待リンクをコピー
+        </Button>
 
         <div className="space-y-2">
           <p className="text-sm font-semibold">
