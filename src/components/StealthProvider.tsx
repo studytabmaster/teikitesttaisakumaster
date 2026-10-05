@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, type ReactNode } from "react";
-import { Shield, ShieldAlert, EyeOff, Globe, Zap, Settings, Lock } from "lucide-react";
+import { Shield, ShieldAlert, EyeOff, Globe, Zap, Lock } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
+  DEFAULT_STEALTH_SETTINGS,
   getStealthSettings,
   saveStealthSettings,
   applyStealthToBrowser,
@@ -21,14 +22,16 @@ import {
 } from "@/lib/stealth";
 
 export function StealthProvider({ children }: { children: ReactNode }) {
-  const [settings, setSettings] = useState<StealthSettings>(getStealthSettings);
+  const [settings, setSettings] = useState<StealthSettings>(DEFAULT_STEALTH_SETTINGS);
   const [modalOpen, setModalOpen] = useState(false);
   const [isWindowBlurred, setIsWindowBlurred] = useState(false);
   const lastEscTimeRef = useRef<number>(0);
 
-  // 初回マウント時に設定適用
+  // マウント時に端末の保存設定を読み込みブラウザに適用（SSR安全）
   useEffect(() => {
-    applyStealthToBrowser(settings);
+    const saved = getStealthSettings();
+    setSettings(saved);
+    applyStealthToBrowser(saved);
   }, []);
 
   // 緊急脱出キーの監視
@@ -36,7 +39,6 @@ export function StealthProvider({ children }: { children: ReactNode }) {
     if (!settings.escapeKeyEnabled) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      // 入力中のEscも確実に検知
       if (settings.escapeKeyType === "Escape") {
         if (e.key === "Escape") {
           e.preventDefault();
@@ -94,10 +96,9 @@ export function StealthProvider({ children }: { children: ReactNode }) {
 
   return (
     <>
-      {/* メッセージホバーぼかしモード時のCSS注入 */}
+      {/* メッセージホバーぼかしモード時のCSS */}
       {settings.hoverBlurMessages && (
         <style>{`
-          /* メッセージ本文やメディアを通常時はぼかし、ホバー時だけクリアにする */
           .bubble-in p, .bubble-out p, .bubble-in img, .bubble-out img, .bubble-in video, .bubble-out video {
             filter: blur(5px);
             transition: filter 0.15s ease;
@@ -129,20 +130,25 @@ export function StealthProvider({ children }: { children: ReactNode }) {
         </div>
       )}
 
-      {/* 画面端のステルス設定ボタン（目立たない半透明） */}
+      {/* 画面右下のステルス設定ボタン（大きく・目立つ・確実に押せる設計） */}
       <button
         type="button"
-        onClick={() => setModalOpen(true)}
-        aria-label="のぞき見防止設定"
-        className="fixed bottom-20 right-3 z-40 flex size-8 items-center justify-center rounded-full bg-background/80 text-foreground/50 shadow-md backdrop-blur border border-border/60 hover:text-foreground hover:bg-background transition-opacity opacity-40 hover:opacity-100"
-        title="のぞき見防止・パニック設定"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setModalOpen(true);
+        }}
+        aria-label="のぞき見防止設定を開く"
+        className="fixed bottom-24 right-4 z-[999] flex items-center gap-1.5 rounded-full bg-card px-3.5 py-2 text-foreground shadow-2xl border-2 border-primary/50 backdrop-blur hover:bg-accent hover:border-primary active:scale-95 transition-all cursor-pointer select-none"
+        title="のぞき見防止・パニック設定を開く"
       >
-        <Shield className="size-4" />
+        <Shield className="size-4 text-primary animate-pulse" />
+        <span className="text-xs font-bold tracking-tight text-foreground">ステルス</span>
       </button>
 
       {/* 設定モーダル */}
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-        <DialogContent className="max-h-[85vh] sm:max-w-md flex flex-col p-5 overflow-y-auto">
+        <DialogContent className="max-h-[85vh] sm:max-w-md flex flex-col p-5 overflow-y-auto z-[1000]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base font-bold">
               <ShieldAlert className="size-5 text-primary" />
