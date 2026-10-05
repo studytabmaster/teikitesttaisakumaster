@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -59,8 +59,27 @@ export function Notifications() {
     return name;
   };
 
+  // 節約: 画面を離れて10分たったら通知用の接続を休止し、戻ったら即再開する
+  const [active, setActive] = useState(true);
   useEffect(() => {
-    if (!user) return;
+    let timer: number | undefined;
+    const onVis = () => {
+      window.clearTimeout(timer);
+      if (document.visibilityState === "hidden") {
+        timer = window.setTimeout(() => setActive(false), 10 * 60 * 1000);
+      } else {
+        setActive(true);
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!user || !active) return;
     let cancelled = false;
     const myGroups = new Set<string>();
 
@@ -217,7 +236,7 @@ export function Notifications() {
       void supabase.removeChannel(channel);
       if (groupChannel) void supabase.removeChannel(groupChannel);
     };
-  }, [user]);
+  }, [user, active]);
 
   return null;
 }
