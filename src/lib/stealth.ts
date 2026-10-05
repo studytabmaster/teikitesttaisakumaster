@@ -63,11 +63,11 @@ export function applyStealthToBrowser(settings: StealthSettings): void {
   if (settings.fakeGoogleTab) {
     document.title = settings.fakeTitle || "Google";
     link.href = GOOGLE_FAVICON_DATA_URL;
-    document.getElementsByTagName("head")[0].appendChild(link);
+    document.head?.appendChild(link);
   } else if (originalTitle) {
     document.title = originalTitle;
     link.href = originalFavicon;
-    document.getElementsByTagName("head")[0].appendChild(link);
+    document.head?.appendChild(link);
   }
 }
 
