@@ -94,8 +94,30 @@ function OpenChatPage() {
   const [birth, setBirth] = useState("");
   const [agree, setAgree] = useState(false);
 
+  // 招待URL（?join=ルームID）で開かれた時の自動案内
+  useEffect(() => {
+    if (typeof window === "undefined" || !user || rooms.length === 0) return;
+    const params = new URLSearchParams(window.location.search);
+    const joinId = params.get("join");
+    if (!joinId) return;
+
+    const target = rooms.find((r) => r.id === joinId);
+    if (!target) return;
+
+    if (memberIds.includes(joinId)) {
+      toast.info(`「${target.name}」には既に参加しています`);
+      return;
+    }
+
+    toast(`「${target.name}」への招待です。「参加」を押して入室してください`, {
+      duration: 6000,
+    });
+    setQuery(target.name);
+  }, [user, rooms, memberIds]);
+
   useEffect(() => {
     if (!user) return;
+
     void supabase
       .from("profiles")
       .select("adult_verified_at")
@@ -508,6 +530,22 @@ function OpenChatPage() {
                         {room.requires_approval ? "・承認制" : "・だれでも参加"}
                       </p>
                     </div>
+                                        <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="shrink-0 text-muted-foreground hover:text-foreground"
+                      title="招待リンクをコピー"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const url = `${window.location.origin}/open?join=${room.id}`;
+                        void navigator.clipboard.writeText(url);
+                        toast.success("招待リンクをコピーしました");
+                      }}
+                    >
+                      <Link2 className="size-4" />
+                    </Button>
+
                     {status === "pending" ? (
                       <span className="shrink-0 text-xs font-semibold text-muted-foreground">
                         申請中
@@ -527,6 +565,7 @@ function OpenChatPage() {
                         {room.requires_approval ? "参加申請" : "参加する"}
                       </Button>
                     )}
+
                   </li>
                 );
               })}
