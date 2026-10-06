@@ -385,11 +385,11 @@ const SYSTEM_ANNOUNCEMENT_GROUP_ID = "00000000-0000-0000-0000-000000000001";
 export type AnnouncementData = {
   id: string;
   content: string;
-  pollOptions?: string[];
-  pollCounts?: number[];
+  pollOptions?: string[] | undefined;
+  pollCounts?: number[] | undefined;
   active: boolean;
   createdAt: string;
-  hasVotedIndex?: number | null;
+  hasVotedIndex?: number | null | undefined;
 };
 
 // 現在のアクティブなアナウンスを取得
