@@ -1,3 +1,4 @@
+import { AnnouncementBanner } from "@/components/AnnouncementBanner";
 import { useEffect, type ReactNode } from "react";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { Compass, MessageCircle, Users, UsersRound, UserRound } from "lucide-react";
@@ -37,7 +38,7 @@ export function AppShell({
     );
   }
 
-import { AnnouncementBanner } from "@/components/AnnouncementBanner"; // ← ファイル上部のimportに追加
+
 
   return (
     <div className="mx-auto flex min-h-screen w-full max-w-lg flex-col bg-background">
