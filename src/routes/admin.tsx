@@ -476,7 +476,7 @@ function AdminPage() {
                 <p className="mt-1 text-2xl font-bold">{stats?.bans ?? 0}</p>
               </div>
             </div>
-
+            <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Megaphone className="size-5 text-primary" />
