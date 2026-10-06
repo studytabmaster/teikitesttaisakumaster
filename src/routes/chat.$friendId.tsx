@@ -1,3 +1,4 @@
+import { StaffBadge } from "@/components/StaffBadge";
 import { useEffect, useRef, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import {
@@ -397,6 +398,7 @@ function ChatPage() {
           <span className="min-w-0">
             <span className="block truncate font-semibold leading-tight">
               {friend?.display_name ?? "..."}
+              <StaffBadge userId={friend?.id} />
             </span>
             <span className="block font-mono text-[11px] leading-tight text-muted-foreground">
               ID: {friend?.friend_code ?? "········"}

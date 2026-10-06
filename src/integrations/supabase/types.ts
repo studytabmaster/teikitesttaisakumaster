@@ -619,6 +619,13 @@ export type Database = {
       confirm_adult: { Args: { _birth_date: string }; Returns: boolean }
       generate_friend_code: { Args: never; Returns: string }
       get_client_ip: { Args: never; Returns: string }
+      get_staff_ids: {
+        Args: never
+        Returns: {
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }[]
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]

@@ -1,3 +1,4 @@
+import { StaffBadge } from "@/components/StaffBadge";
 import { useEffect, useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, Ban, Check, Clock, Flag, MessageSquare, Phone, UserCheck, UserMinus, UserPlus, Video, X } from "lucide-react";
@@ -165,7 +166,7 @@ function FriendProfilePage() {
             {initials(friend?.display_name ?? "?")}
           </AvatarFallback>
         </Avatar>
-        <h1 className="mt-4 text-2xl font-bold">{friend?.display_name ?? "..."}</h1>
+        <h1 className="mt-4 text-2xl font-bold">{friend?.display_name ?? "..."}<StaffBadge userId={friend?.id} size={22} /></h1>
         <p className="mt-1 text-sm opacity-80">
           {friend?.status_message || "ひとことは設定されていません"}
         </p>
