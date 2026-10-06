@@ -37,6 +37,8 @@ export function AppShell({
     );
   }
 
+import { AnnouncementBanner } from "@/components/AnnouncementBanner"; // ← ファイル上部のimportに追加
+
   return (
     <div className="mx-auto flex min-h-screen w-full max-w-lg flex-col bg-background">
       <header className="sticky top-0 z-20 flex items-center justify-between border-b border-border bg-background/90 px-5 py-4 backdrop-blur">
@@ -44,7 +46,10 @@ export function AppShell({
         {action}
       </header>
 
+      <AnnouncementBanner />
+
       <main className="flex-1 pb-24">{children}</main>
+
 
       <nav className="fixed bottom-0 left-1/2 z-20 w-full max-w-lg -translate-x-1/2 border-t border-border bg-background/95 backdrop-blur">
         <ul className="flex">
