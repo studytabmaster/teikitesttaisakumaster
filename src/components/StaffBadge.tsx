@@ -42,7 +42,7 @@ export function useStaffRole(userId?: string | null): Role | null {
 }
 
 // Roblox風の公式認証バッジ（ギザギザの星型＋チェック）
-export function StaffBadge({ userId, size = 16 }: { userId?: string | null; size?: number }) {
+export function StaffBadge({ userId, size = 16 }: { userId?: string | null | undefined; size?: number }) {
   const role = useStaffRole(userId);
   if (!role) return null;
   const label = role === "admin" ? "RINE公式・管理者" : "RINE公式・スタッフ";
