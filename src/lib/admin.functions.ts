@@ -379,3 +379,165 @@ export const adminStats = createServerFn({ method: "POST" })
       bans: bans.count ?? 0,
     };
   });
+// ==================== 運営アナウンス＆管理者投票 ====================
+const SYSTEM_ANNOUNCEMENT_GROUP_ID = "00000000-0000-0000-0000-000000000001";
+
+export type AnnouncementData = {
+  id: string;
+  content: string;
+  pollOptions?: string[];
+  pollCounts?: number[];
+  active: boolean;
+  createdAt: string;
+  hasVotedIndex?: number | null;
+};
+
+// 現在のアクティブなアナウンスを取得
+export const getActiveAnnouncement = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }): Promise<AnnouncementData | null> => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: row } = await supabaseAdmin
+      .from("groups")
+      .select("description")
+      .eq("id", SYSTEM_ANNOUNCEMENT_GROUP_ID)
+      .maybeSingle();
+
+    if (!row || !row.description) return null;
+
+    try {
+      const parsed = JSON.parse(row.description) as AnnouncementData;
+      if (!parsed.active) return null;
+
+      if (parsed.pollOptions && parsed.pollOptions.length > 0) {
+        const { data: vote } = await supabaseAdmin
+          .from("group_join_requests")
+          .select("message")
+          .eq("group_id", SYSTEM_ANNOUNCEMENT_GROUP_ID)
+          .eq("user_id", context.userId)
+          .maybeSingle();
+
+        if (vote && vote.message !== null) {
+          parsed.hasVotedIndex = parseInt(vote.message, 10);
+        }
+      }
+
+      return parsed;
+    } catch {
+      return null;
+    }
+  });
+
+// アナウンスを発行（管理者のみ）
+export const adminPublishAnnouncement = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { content: string; pollOptions?: string[] }) => input)
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context.supabase as never, context.userId);
+    const content = (data.content ?? "").trim();
+    if (!content) throw new Error("アナウンス内容を入力してください");
+
+    const pollOptions = (data.pollOptions ?? [])
+      .map((o) => o.trim())
+      .filter((o) => o.length > 0);
+
+    const announcement: AnnouncementData = {
+      id: Date.now().toString(),
+      content,
+      pollOptions: pollOptions.length >= 2 ? pollOptions : undefined,
+      pollCounts: pollOptions.length >= 2 ? new Array(pollOptions.length).fill(0) : undefined,
+      active: true,
+      createdAt: new Date().toISOString(),
+    };
+
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    await supabaseAdmin.from("groups").upsert({
+      id: SYSTEM_ANNOUNCEMENT_GROUP_ID,
+      name: "📢 運営アナウンス",
+      description: JSON.stringify(announcement),
+      is_open: false,
+      owner_id: context.userId,
+    });
+
+    // 以前の投票履歴をリセット
+    await supabaseAdmin
+      .from("group_join_requests")
+      .delete()
+      .eq("group_id", SYSTEM_ANNOUNCEMENT_GROUP_ID);
+
+    return { ok: true, announcement };
+  });
+
+// 投票を実行（一般ユーザー）
+export const voteAnnouncement = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { optionIndex: number }) => input)
+  .handler(async ({ data, context }) => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: row } = await supabaseAdmin
+      .from("groups")
+      .select("description")
+      .eq("id", SYSTEM_ANNOUNCEMENT_GROUP_ID)
+      .maybeSingle();
+
+    if (!row || !row.description) throw new Error("アナウンスが見つかりません");
+    const parsed = JSON.parse(row.description) as AnnouncementData;
+    if (!parsed.active || !parsed.pollOptions || !parsed.pollCounts) {
+      throw new Error("投票は終了しました");
+    }
+
+    const idx = data.optionIndex;
+    if (idx < 0 || idx >= parsed.pollOptions.length) {
+      throw new Error("無効な選択肢です");
+    }
+
+    const { data: existing } = await supabaseAdmin
+      .from("group_join_requests")
+      .select("id")
+      .eq("group_id", SYSTEM_ANNOUNCEMENT_GROUP_ID)
+      .eq("user_id", context.userId)
+      .maybeSingle();
+
+    if (existing) throw new Error("すでに投票済みです");
+
+    await supabaseAdmin.from("group_join_requests").insert({
+      group_id: SYSTEM_ANNOUNCEMENT_GROUP_ID,
+      user_id: context.userId,
+      message: idx.toString(),
+      status: "approved",
+    });
+
+    parsed.pollCounts[idx] = (parsed.pollCounts[idx] || 0) + 1;
+
+    await supabaseAdmin
+      .from("groups")
+      .update({ description: JSON.stringify(parsed) })
+      .eq("id", SYSTEM_ANNOUNCEMENT_GROUP_ID);
+
+    return { ok: true, pollCounts: parsed.pollCounts, hasVotedIndex: idx };
+  });
+
+// アナウンスを終了（管理者のみ）
+export const adminCloseAnnouncement = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await assertAdmin(context.supabase as never, context.userId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+
+    const { data: row } = await supabaseAdmin
+      .from("groups")
+      .select("description")
+      .eq("id", SYSTEM_ANNOUNCEMENT_GROUP_ID)
+      .maybeSingle();
+
+    if (row && row.description) {
+      const parsed = JSON.parse(row.description) as AnnouncementData;
+      parsed.active = false;
+      await supabaseAdmin
+        .from("groups")
+        .update({ description: JSON.stringify(parsed) })
+        .eq("id", SYSTEM_ANNOUNCEMENT_GROUP_ID);
+    }
+
+    return { ok: true };
+  });
