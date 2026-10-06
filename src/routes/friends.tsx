@@ -1,3 +1,4 @@
+import { StaffBadge } from "@/components/StaffBadge";
 import { useEffect, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Check, Clock, MessageSquare, Phone, Share2, UserPlus, Video, X } from "lucide-react";
@@ -306,7 +307,7 @@ function FriendsPage() {
                       </AvatarFallback>
                     </Avatar>
                     <div className="min-w-0">
-                      <p className="truncate font-semibold">{f.display_name}</p>
+                      <p className="truncate font-semibold">{f.display_name}<StaffBadge userId={f.id} /></p>
                       <p className="truncate text-sm text-muted-foreground">
                         {isBlocked(f.id) ? "ブロック中" : f.status_message || `ID: ${f.friend_code}`}
                       </p>

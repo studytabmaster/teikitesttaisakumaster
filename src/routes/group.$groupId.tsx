@@ -1,3 +1,4 @@
+import { StaffBadge } from "@/components/StaffBadge";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { uploadToCloudinary, isLateNightJST } from "@/lib/cloudinary";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
@@ -1949,6 +1950,7 @@ function GroupSettingsDialog({
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm">
                     {m.display_name}
+                    <StaffBadge userId={m.id} />
                   </span>
 
                   <span className="block font-mono text-[10px] text-muted-foreground">

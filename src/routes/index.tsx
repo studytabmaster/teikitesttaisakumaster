@@ -1,3 +1,4 @@
+import { StaffBadge } from "@/components/StaffBadge";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Check, Copy, MailOpen, MessageCircleMore, UserPlus } from "lucide-react";
@@ -323,6 +324,7 @@ function TalksPage() {
                   <div className="min-w-0 flex-1">
                     <p className={cn("truncate", unread > 0 ? "font-bold" : "font-semibold")}>
                       {friend.display_name}
+                      <StaffBadge userId={friend.id} />
                     </p>
                     <p
                       className={cn(
