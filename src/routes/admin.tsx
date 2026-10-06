@@ -3,7 +3,7 @@ import {
   adminCloseAnnouncement,
   getActiveAnnouncement,
 } from "@/lib/admin.functions";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
@@ -471,14 +471,15 @@ function AdminPage() {
                   {stats?.openReports ?? 0}
                 </p>
               </div>
-              <div className="rounded-xl border bg-card p-4">
-                <p className="text-xs text-muted-foreground">利用停止中ユーザー</p>
-                <p className="mt-1 text-2xl font-bold">{stats?.bans ?? 0}</p>
-              </div>
+<div className="rounded-xl border bg-card p-4">
+              <p className="text-xs text-muted-foreground">利用停止中ユーザー</p>
+              <p className="mt-1 text-2xl font-bold">{stats?.bans ?? 0}</p>
             </div>
-            <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
+          </div>
+
+          <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
                   <Megaphone className="size-5 text-primary" />
                   <h3 className="font-semibold text-sm">全ユーザー画面上部へのアナウンス・投票</h3>
                 </div>
