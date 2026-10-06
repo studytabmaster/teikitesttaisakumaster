@@ -477,22 +477,86 @@ function AdminPage() {
               </div>
             </div>
 
-            {/* 一斉アナウンス */}
-            <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-3">
-              <div className="flex items-center gap-2">
-                <Megaphone className="size-5 text-primary" />
-                <h3 className="font-semibold text-sm">全オープンチャットへの一斉アナウンス配信</h3>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Megaphone className="size-5 text-primary" />
+                  <h3 className="font-semibold text-sm">全ユーザー画面上部へのアナウンス・投票</h3>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void handleCloseActiveAnnouncement()}
+                  className="text-xs text-destructive hover:bg-destructive/10"
+                >
+                  現在のアナウンスを終了
+                </Button>
               </div>
               <p className="text-xs text-muted-foreground">
-                公開中のすべてのオープンチャットに「【📢 運営アナウンス】」として送信されます。
+                全ユーザーの画面上部にピン留め帯として表示されます（各ユーザーが×で非表示可能）。
               </p>
               <Textarea
-                placeholder="重要なお知らせやメンテナンス予告を入力..."
+                placeholder="お知らせ本文を入力..."
                 rows={3}
                 value={announcement}
                 onChange={(e) => setAnnouncement(e.target.value)}
               />
-              <div className="flex justify-end">
+
+              {/* 投票アンケートトグル */}
+              <div className="space-y-2 pt-2 border-t">
+                <label className="flex items-center gap-2 text-xs font-medium cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={enablePoll}
+                    onChange={(e) => setEnablePoll(e.target.checked)}
+                    className="rounded text-primary"
+                  />
+                  アンケート・投票を追加する
+                </label>
+
+                {enablePoll && (
+                  <div className="space-y-2 pl-4 border-l-2 border-primary/20">
+                    <p className="text-[11px] text-muted-foreground">選択肢を2〜4個入力してください</p>
+                    {pollOptions.map((opt, i) => (
+                      <div key={i} className="flex gap-2">
+                        <Input
+                          placeholder={`選択肢 ${i + 1}`}
+                          value={opt}
+                          onChange={(e) => {
+                            const next = [...pollOptions];
+                            next[i] = e.target.value;
+                            setPollOptions(next);
+                          }}
+                          className="h-8 text-xs"
+                        />
+                        {pollOptions.length > 2 && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                            onClick={() => setPollOptions(pollOptions.filter((_, idx) => idx !== i))}
+                          >
+                            <Trash2 className="size-3.5" />
+                          </Button>
+                        )}
+                      </div>
+                    ))}
+                    {pollOptions.length < 4 && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setPollOptions([...pollOptions, ""])}
+                        className="h-7 text-xs gap-1"
+                      >
+                        <Plus className="size-3" />
+                        選択肢を追加
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end pt-2">
                 <Button
                   size="sm"
                   onClick={() => void handleSendAnnouncement()}
@@ -500,7 +564,7 @@ function AdminPage() {
                   className="gap-1.5"
                 >
                   <Megaphone className="size-3.5" />
-                  {sendingAnnounce ? "配信中…" : "一斉配信する"}
+                  {sendingAnnounce ? "公開中…" : "画面上部に固定公開する"}
                 </Button>
               </div>
             </div>
