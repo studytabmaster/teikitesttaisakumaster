@@ -1045,13 +1045,12 @@ function GroupChatPage() {
                       <DropdownMenuTrigger
                         asChild
                       >
-                        <button
+               <button
                           type="button"
-                          className="mb-0.5 block text-left text-[11px] text-foreground/60"
+                          className="mb-0.5 flex items-center text-left text-[11px] text-foreground/60"
                         >
-                          {
-                            sender.display_name
-                          }
+                          <span>{sender.display_name}</span>
+                          <StaffBadge userId={sender.id} size={13} />
 
                           <span className="ml-1 font-mono text-[9px] text-foreground/40">
                             ID:
@@ -1060,6 +1059,7 @@ function GroupChatPage() {
                             }
                           </span>
                         </button>
+
                       </DropdownMenuTrigger>
 
                       <DropdownMenuContent align="start">
