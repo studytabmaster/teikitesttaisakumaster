@@ -1,3 +1,9 @@
+import {
+  adminPublishAnnouncement,
+  adminCloseAnnouncement,
+  getActiveAnnouncement,
+} from "@/lib/admin.functions";
+import { Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
@@ -108,6 +114,10 @@ function AdminPage() {
   const [msgLoading, setMsgLoading] = useState(false);
 
   const [announcement, setAnnouncement] = useState("");
+  const [pollOptions, setPollOptions] = useState<string[]>(["", ""]);
+  const [enablePoll, setEnablePoll] = useState(false);
+  const publishAnnouncement = useServerFn(adminPublishAnnouncement);
+  const closeAnnouncement = useServerFn(adminCloseAnnouncement);
   const [sendingAnnounce, setSendingAnnounce] = useState(false);
 
   const unlock = useServerFn(unlockAdmin);
@@ -314,19 +324,36 @@ function AdminPage() {
     }
   };
 
-  const handleSendAnnouncement = async () => {
+    const handleSendAnnouncement = async () => {
     const text = announcement.trim();
     if (!text) return;
-    if (!confirm(`全オープンチャットへ以下のアナウンスを一斉配信しますか？\n\n${text}`)) return;
+    const options = enablePoll ? pollOptions.filter((o) => o.trim().length > 0) : [];
+    if (enablePoll && options.length < 2) {
+      toast.error("投票を行う場合は選択肢を2つ以上入力してください");
+      return;
+    }
+    if (!confirm("全ユーザーの画面上部にアナウンスを固定表示しますか？")) return;
     setSendingAnnounce(true);
     try {
-      const res = await broadcastAnnouncement({ data: { content: text } });
-      toast.success(`${res.count} 件のオープンチャットへアナウンスを配信しました`);
+      await publishAnnouncement({ data: { content: text, pollOptions: options } });
+      toast.success("全ユーザーの画面上部へアナウンスを公開しました");
       setAnnouncement("");
+      setPollOptions(["", ""]);
+      setEnablePoll(false);
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
       setSendingAnnounce(false);
+    }
+  };
+
+  const handleCloseActiveAnnouncement = async () => {
+    if (!confirm("現在公開中のアナウンスを終了（非表示に）しますか？")) return;
+    try {
+      await closeAnnouncement();
+      toast.success("アナウンスを終了しました");
+    } catch (e) {
+      toast.error(errorMessage(e));
     }
   };
 
