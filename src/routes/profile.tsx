@@ -14,6 +14,7 @@ import { initials } from "@/lib/rine";
 import { makeAvatarDataUrl } from "@/lib/compress";
 import { uploadToCloudinary } from "@/lib/cloudinary";
 import { maskProfanity } from "@/lib/profanity";
+import { checkProfileAvatarSafety } from "@/lib/moderation.functions";
 
 export const Route = createFileRoute("/profile")({
   head: () => ({
@@ -53,8 +54,28 @@ function ProfilePage() {
       return;
     }
     setBusy(true);
+    const toastId = toast.loading("画像の安全性を確認中...");
     try {
+      // 128x128pxの軽量JPEGにブラウザ側で事前圧縮（AIトークンと通信量を最小化）
       const dataUrl = await makeAvatarDataUrl(file);
+
+      // AI Gateway を使った不適切画像チェック
+      try {
+        const modResult = await checkProfileAvatarSafety({
+          data: { imageBase64: dataUrl },
+        });
+
+        if (!modResult.safe) {
+          const reasonMsg = modResult.reason
+            ? `不適切な画像が検出されました: ${modResult.reason}`
+            : "利用規約に反する画像が検出されたため、アイコンに設定できません";
+          toast.error(reasonMsg, { id: toastId, duration: 6000 });
+          return;
+        }
+      } catch (modErr) {
+        console.warn("AIモデレーションスキップ:", modErr);
+      }
+
       // 節約: 画像は外部（Cloudinary）に置き、短いURLだけ保存する。失敗時は従来どおり
       let finalUrl = dataUrl;
       try {
@@ -64,9 +85,9 @@ function ProfilePage() {
         finalUrl = dataUrl;
       }
       setAvatarUrl(finalUrl);
-      toast.success("アイコンを読み込みました。保存してください");
+      toast.success("安全性が確認されました。保存ボタンを押してください", { id: toastId });
     } catch {
-      toast.error("この画像は読み込めませんでした");
+      toast.error("この画像は読み込めませんでした", { id: toastId });
     } finally {
       setBusy(false);
     }
@@ -109,7 +130,6 @@ function ProfilePage() {
     await refreshProfile();
     toast.success("プロフィールを保存しました");
   };
-
 
   const copyCode = async () => {
     if (!profile) return;
