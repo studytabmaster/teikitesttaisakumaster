@@ -14,7 +14,8 @@ import { initials } from "@/lib/rine";
 import { makeAvatarDataUrl } from "@/lib/compress";
 import { uploadToCloudinary } from "@/lib/cloudinary";
 import { maskProfanity } from "@/lib/profanity";
-import { checkProfileAvatarSafety } from "@/lib/moderation.functions";
+import { checkProfileAvatarSafety } from "./moderation.functions";
+
 
 export const Route = createFileRoute("/profile")({
   head: () => ({
