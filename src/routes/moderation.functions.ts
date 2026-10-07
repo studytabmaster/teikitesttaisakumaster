@@ -3,8 +3,9 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 
 export type ModerationResult = {
   safe: boolean;
-  reason?: string;
+  reason?: string | undefined;
 };
+
 
 // プロフィールアイコンのAIモデレーション検査
 // 縮小済み画像（128x128px）を受け取り、AI Gatewayで検査して不適切な理由を返す
