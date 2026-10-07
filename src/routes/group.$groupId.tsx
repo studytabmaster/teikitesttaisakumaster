@@ -61,7 +61,8 @@ import {
 } from "@/lib/rine";
 import { maskProfanity } from "@/lib/profanity";
 import { enqueueMessage } from "@/lib/outbox";
-import { compressImage } from "@/lib/compress";
+import { compressImage, makeAvatarDataUrl } from "@/lib/compress";
+import { checkProfileAvatarSafety } from "./moderation.functions";
 import { useGroupCall } from "@/components/GroupCallProvider";
 import { cn } from "@/lib/utils";
 
@@ -570,19 +571,27 @@ function GroupChatPage() {
 
     if (!file || !user) return;
 
-    const isVideo = file.type.startsWith("video/");
-
-    if (
-      !file.type.startsWith("image/") &&
-      !isVideo
-    ) {
-      toast.error(
-        "画像または動画を選んでください",
-      );
-      return;
-    }
-
     setUploading(true);
+
+    // 画像の場合、AIによる不適切コンテンツ検査（128x128極小データで判定）
+    if (!isVideo) {
+      try {
+        const thumb = await makeAvatarDataUrl(file);
+        const modResult = await checkProfileAvatarSafety({
+          data: { imageBase64: thumb },
+        });
+        if (!modResult.safe) {
+          setUploading(false);
+          const reasonMsg = modResult.reason
+            ? `不適切な画像が検出されました: ${modResult.reason}`
+            : "利用規約に反する画像が検出されたため、送信できません";
+          toast.error(reasonMsg, { duration: 6000 });
+          return;
+        }
+      } catch (err) {
+        console.warn("AIモデレーションスキップ:", err);
+      }
+    }
 
     // 画像はアップロード前に自動圧縮
     const upload = isVideo
@@ -602,6 +611,7 @@ function GroupChatPage() {
     }
 
     let finalUrl = "";
+
 
     // 画像はCloudinaryへ直接アップロード（ストレージ転送量ゼロ）
     if (!isVideo) {
