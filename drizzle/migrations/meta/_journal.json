@@ -99,6 +99,13 @@
       "when": 1791272338274,
       "tag": "0013_staff_ids",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1791361034075,
+      "tag": "0014_profile_avatar_key",
+      "breakpoints": true
     }
   ]
 }
