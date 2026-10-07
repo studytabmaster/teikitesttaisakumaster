@@ -37,7 +37,8 @@ import { formatTime, initials, type Message, type Profile } from "@/lib/rine";
 import { maskProfanity } from "@/lib/profanity";
 import { enqueueMessage, getOutboxFor, onOutboxChange, type PendingMessage } from "@/lib/outbox";
 import { pairChannelName } from "@/lib/realtime";
-import { compressImage } from "@/lib/compress";
+import { compressImage, makeAvatarDataUrl } from "@/lib/compress";
+import { checkProfileAvatarSafety } from "./moderation.functions";
 import { cn } from "@/lib/utils";
 import { uploadToCloudinary, isLateNightJST } from "@/lib/cloudinary";
 
@@ -294,6 +295,27 @@ function ChatPage() {
       return;
     }
     setUploading(true);
+
+    // 画像の場合、AIによる不適切コンテンツ検査（128x128極小データで判定）
+    if (!isVideo) {
+      try {
+        const thumb = await makeAvatarDataUrl(file);
+        const modResult = await checkProfileAvatarSafety({
+          data: { imageBase64: thumb },
+        });
+        if (!modResult.safe) {
+          setUploading(false);
+          const reasonMsg = modResult.reason
+            ? `不適切な画像が検出されました: ${modResult.reason}`
+            : "利用規約に反する画像が検出されたため、送信できません";
+          toast.error(reasonMsg, { duration: 6000 });
+          return;
+        }
+      } catch (err) {
+        console.warn("AIモデレーションスキップ:", err);
+      }
+    }
+
     // 画像はアップロード前に自動圧縮してサイズを節約
     const upload = isVideo ? file : await compressImage(file);
     const limit = isVideo ? 10 : 5;
@@ -304,6 +326,7 @@ function ChatPage() {
     }
 
     // Cloudinaryに直接アップロード（Supabaseストレージの転送量を完全回避）
+
     let path = "";
     try {
       path = await uploadToCloudinary(upload);
