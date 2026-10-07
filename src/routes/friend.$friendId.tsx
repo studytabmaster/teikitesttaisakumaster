@@ -4,6 +4,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, Ban, Check, Clock, Flag, MessageSquare, Phone, UserCheck, UserMinus, UserPlus, Video, X } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchProfile, fetchProfiles } from "@/lib/profileCache";
 import { useAuth } from "@/hooks/useAuth";
 import { useCall } from "@/components/CallProvider";
 import { useBlocks } from "@/hooks/useBlocks";
@@ -47,11 +48,7 @@ function FriendProfilePage() {
     if (!user || !friendId) return;
 
     // プロフィール情報取得
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", friendId)
-      .maybeSingle();
+    const { data: prof } = { data: await fetchProfile(friendId) };
     setFriend((prof as Profile) ?? null);
 
     if (user.id === friendId) return;

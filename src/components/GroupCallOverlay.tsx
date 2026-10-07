@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Mic, MicOff, PhoneOff, Users, Video, VideoOff } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchProfile, fetchProfiles } from "@/lib/profileCache";
 import { useAuth } from "@/hooks/useAuth";
 import { useGroupCall, type RoomPeer } from "@/components/GroupCallProvider";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -79,7 +80,7 @@ export function GroupCallOverlay() {
     const missing = peers.map((p) => p.id).filter((id) => !profiles[id]);
     if (missing.length === 0) return;
     void (async () => {
-      const { data } = await supabase.from("profiles").select("*").in("id", missing);
+      const { data } = { data: await fetchProfiles(missing) };
       if (!data) return;
       setProfiles((prev) => {
         const next = { ...prev };

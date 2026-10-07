@@ -385,6 +385,7 @@ export type Database = {
       profiles: {
         Row: {
           adult_verified_at: string | null
+          avatar_key: string | null
           avatar_url: string | null
           birth_date: string | null
           created_at: string
@@ -397,6 +398,7 @@ export type Database = {
         }
         Insert: {
           adult_verified_at?: string | null
+          avatar_key?: string | null
           avatar_url?: string | null
           birth_date?: string | null
           created_at?: string
@@ -409,6 +411,7 @@ export type Database = {
         }
         Update: {
           adult_verified_at?: string | null
+          avatar_key?: string | null
           avatar_url?: string | null
           birth_date?: string | null
           created_at?: string
@@ -564,6 +567,7 @@ export type Database = {
         Args: { _request_id: string }
         Returns: {
           adult_verified_at: string | null
+          avatar_key: string | null
           avatar_url: string | null
           birth_date: string | null
           created_at: string
@@ -585,6 +589,7 @@ export type Database = {
         Args: { _code: string }
         Returns: {
           adult_verified_at: string | null
+          avatar_key: string | null
           avatar_url: string | null
           birth_date: string | null
           created_at: string
@@ -659,6 +664,7 @@ export type Database = {
         Args: { _code: string }
         Returns: {
           adult_verified_at: string | null
+          avatar_key: string | null
           avatar_url: string | null
           birth_date: string | null
           created_at: string
@@ -680,6 +686,7 @@ export type Database = {
         Args: { _target_id: string }
         Returns: {
           adult_verified_at: string | null
+          avatar_key: string | null
           avatar_url: string | null
           birth_date: string | null
           created_at: string

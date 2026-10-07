@@ -1,0 +1,1 @@
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS avatar_key text GENERATED ALWAYS AS (md5(coalesce(avatar_url, ''))) STORED;

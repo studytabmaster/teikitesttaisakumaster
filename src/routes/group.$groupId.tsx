@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchProfile, fetchProfiles } from "@/lib/profileCache";
 import { forgetMediaUrl } from "@/lib/mediaUrl";
 import { deleteGroupMessage } from "./group.functions";
 import { useAuth } from "@/hooks/useAuth";
@@ -216,10 +217,7 @@ function GroupChatPage() {
       return;
     }
 
-    const { data } = await supabase
-      .from("profiles")
-      .select("*")
-      .in("id", ids);
+    const { data } = { data: await fetchProfiles(ids) };
 
     setMembers((data ?? []) as Profile[]);
   }, [groupId]);
@@ -1439,10 +1437,7 @@ function GroupSettingsDialog({
       }
 
       const { data } =
-        await supabase
-          .from("profiles")
-          .select("*")
-          .in("id", ids);
+        { data: await fetchProfiles(ids) };
 
       setFriends(
         (data ?? []) as Profile[],
@@ -1503,10 +1498,7 @@ function GroupSettingsDialog({
       }
 
       const { data: profs } =
-        await supabase
-          .from("profiles")
-          .select("*")
-          .in("id", ids);
+        { data: await fetchProfiles(ids) };
 
       const map: Record<
         string,

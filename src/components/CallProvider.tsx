@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchProfile, fetchProfiles } from "@/lib/profileCache";
 import { useAuth } from "@/hooks/useAuth";
 import type { CallSignal, Profile } from "@/lib/rine";
 import { CallOverlay } from "@/components/CallOverlay";
@@ -312,11 +313,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
       setStatus("incoming");
       startRingtone();
       openCallChannel(signal.from_user);
-      const { data } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", signal.from_user)
-        .maybeSingle();
+      const { data } = { data: await fetchProfile(signal.from_user) };
       setPeer((data as Profile) ?? null);
       showIncomingCallNotification(
         (data as Profile | null)?.display_name ?? "不明なユーザー",
