@@ -4,6 +4,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { Check, Copy, MailOpen, MessageCircleMore, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchProfile, fetchProfiles } from "@/lib/profileCache";
 import { cleanupOldData } from "@/lib/cleanup.functions";
 import { requestNotificationPermission } from "@/lib/notify";
 import { useAuth } from "@/hooks/useAuth";
@@ -79,7 +80,7 @@ function TalksPage() {
         return;
       }
       const [{ data: profiles }, { data: msgs }] = await Promise.all([
-        supabase.from("profiles").select("*").in("id", ids),
+        fetchProfiles(ids).then((data) => ({ data })),
         supabase
           .from("messages")
           // 一覧では必要な列だけ・直近分だけ取得して通信量とクラウド利用量を抑える

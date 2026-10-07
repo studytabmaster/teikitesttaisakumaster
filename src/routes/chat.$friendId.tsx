@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchProfile, fetchProfiles } from "@/lib/profileCache";
 import { forgetMediaUrl } from "@/lib/mediaUrl";
 import { useAuth } from "@/hooks/useAuth";
 import { useCall } from "@/components/CallProvider";
@@ -91,7 +92,7 @@ function ChatPage() {
 
     const load = async () => {
       const [{ data: p }, { data: msgs }] = await Promise.all([
-        supabase.from("profiles").select("*").eq("id", friendId).maybeSingle(),
+        fetchProfile(friendId).then((data) => ({ data })),
         supabase
           .from("messages")
           .select("*")

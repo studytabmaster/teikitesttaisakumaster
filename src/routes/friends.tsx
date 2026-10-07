@@ -4,6 +4,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { Check, Clock, MessageSquare, Phone, Share2, UserPlus, Video, X } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchProfile, fetchProfiles } from "@/lib/profileCache";
 import { useAuth } from "@/hooks/useAuth";
 import { useCall } from "@/components/CallProvider";
 import { useBlocks } from "@/hooks/useBlocks";
@@ -75,11 +76,7 @@ function FriendsPage() {
       .eq("user_id", user.id);
     const ids = (links ?? []).map((l) => l.friend_id);
     if (ids.length > 0) {
-      const { data } = await supabase
-        .from("profiles")
-        .select("*")
-        .in("id", ids)
-        .order("display_name");
+      const { data } = { data: await fetchProfiles(ids).then((r) => r.sort((a, b) => a.display_name.localeCompare(b.display_name))) };
       setFriends((data ?? []) as Profile[]);
     } else {
       setFriends([]);
@@ -95,7 +92,7 @@ function FriendsPage() {
 
     if (inReqs && inReqs.length > 0) {
       const senderIds = inReqs.map((r) => r.sender_id);
-      const { data: senders } = await supabase.from("profiles").select("*").in("id", senderIds);
+      const { data: senders } = { data: await fetchProfiles(senderIds) };
       const sMap = new Map((senders ?? []).map((s) => [s.id, s as Profile]));
       setIncoming(
         inReqs.map((r) => ({
@@ -117,7 +114,7 @@ function FriendsPage() {
 
     if (outReqs && outReqs.length > 0) {
       const recvIds = outReqs.map((r) => r.receiver_id);
-      const { data: receivers } = await supabase.from("profiles").select("*").in("id", recvIds);
+      const { data: receivers } = { data: await fetchProfiles(recvIds) };
       const rMap = new Map((receivers ?? []).map((r) => [r.id, r as Profile]));
       setOutgoing(
         outReqs.map((r) => ({
