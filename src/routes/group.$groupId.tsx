@@ -570,7 +570,7 @@ function GroupChatPage() {
     e.target.value = "";
 
     if (!file || !user) return;
-
+    const isVideo = file.type.startsWith("video/");
     setUploading(true);
 
     // 画像の場合、AIによる不適切コンテンツ検査（128x128極小データで判定）
