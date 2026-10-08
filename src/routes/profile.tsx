@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { initials } from "@/lib/rine";
-import { makeAvatarDataUrl } from "@/lib/compress";
+import { makeAvatarDataUrl, withTimeout } from "@/lib/compress";
 import { uploadToCloudinary } from "@/lib/cloudinary";
 import { maskProfanity } from "@/lib/profanity";
 import { checkProfileAvatarSafety } from "./moderation.functions";
@@ -62,9 +62,9 @@ function ProfilePage() {
 
       // AI Gateway を使った不適切画像チェック
       try {
-        const modResult = await checkProfileAvatarSafety({
+        const modResult = await withTimeout(checkProfileAvatarSafety({
           data: { imageBase64: dataUrl },
-        });
+        }), 8000);
 
         if (!modResult.safe) {
           const reasonMsg = modResult.reason
@@ -81,7 +81,7 @@ function ProfilePage() {
       let finalUrl = dataUrl;
       try {
         const blob = await (await fetch(dataUrl)).blob();
-        finalUrl = await uploadToCloudinary(blob);
+        finalUrl = await withTimeout(uploadToCloudinary(blob), 8000);
       } catch {
         finalUrl = dataUrl;
       }
@@ -115,14 +115,17 @@ function ProfilePage() {
   const save = async () => {
     if (!user) return;
     setBusy(true);
-    const { error } = await supabase
+    const { error } = await withTimeout(
+      Promise.resolve(supabase
       .from("profiles")
       .update({
         display_name: maskProfanity(displayName.trim()) || "ユーザー",
         status_message: maskProfanity(statusMessage),
         avatar_url: avatarUrl.trim() || null,
       })
-      .eq("id", user.id);
+      .eq("id", user.id)),
+      8000,
+    ).catch(() => ({ error: new Error("timeout") }));
     setBusy(false);
     if (error) {
       toast.error("保存できませんでした");

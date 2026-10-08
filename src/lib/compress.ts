@@ -51,10 +51,11 @@ export async function compressImage(file: File): Promise<File> {
 
 const AVATAR_EDGE = 128;
 const AVATAR_QUALITY = 0.65;
+const AVATAR_WEBP_QUALITY = 0.72;
 
 /**
- * アイコン用に正方形へ切り抜き、256px の JPEG データURLへ変換する。
- * png / jpg / jpeg / gif / webp など、ブラウザが読める画像なら何でも対応。
+ * アイコン用に正方形へ切り抜き、128px の WebP データURLへ変換する。
+ * WebP非対応ブラウザでは JPEG にフォールバック。小さい方を採用。
  */
 export async function makeAvatarDataUrl(file: File): Promise<string> {
   const img = await loadImage(file);
@@ -66,6 +67,22 @@ export async function makeAvatarDataUrl(file: File): Promise<string> {
   canvas.height = AVATAR_EDGE;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("canvas unavailable");
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
   ctx.drawImage(img, sx, sy, side, side, 0, 0, AVATAR_EDGE, AVATAR_EDGE);
-  return canvas.toDataURL("image/jpeg", AVATAR_QUALITY);
+  const jpeg = canvas.toDataURL("image/jpeg", AVATAR_QUALITY);
+  const webp = canvas.toDataURL("image/webp", AVATAR_WEBP_QUALITY);
+  if (webp.startsWith("data:image/webp") && webp.length < jpeg.length) return webp;
+  return jpeg;
+}
+
+/** 詰まり防止: 指定時間で打ち切るPromiseラッパー */
+export function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("timeout")), ms);
+    p.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); },
+    );
+  });
 }
