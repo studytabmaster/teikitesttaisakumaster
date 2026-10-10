@@ -1,7 +1,7 @@
 import { StaffBadge } from "@/components/StaffBadge";
 import { useEffect, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Check, Clock, MessageSquare, Phone, Share2, UserPlus, Video, X } from "lucide-react";
+import { Check, Clock, MessageSquare, Phone, Pin, Share2, UserPlus, Video, X } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { fetchProfile, fetchProfiles } from "@/lib/profileCache";
@@ -129,79 +129,154 @@ function FriendsPage() {
 
   useEffect(() => {
     void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
-  // フレンド申請の送信
   const sendRequest = async () => {
-    if (!code.trim()) return;
+    if (!user) return;
+    const trimmed = code.trim();
+    if (!trimmed) {
+      toast.error("IDか名前を入力してください");
+      return;
+    }
     setBusy(true);
-    const { data, error } = await supabase.rpc("send_friend_request_by_code", { _code: code.trim() });
-    setBusy(false);
-    if (error) {
-      toast.error(error.message.replace(/^.*?:\s*/, ""));
-      return;
-    }
-    const target = data as unknown as Profile;
-    toast.success(`${target?.display_name ?? "相手"} にフレンド申請を送りました！`);
-    setCode("");
-    setOpen(false);
-    void load();
-  };
 
-  // 申請の承認
-  const acceptReq = async (reqId: string) => {
-    setActionBusy(reqId);
-    const { data, error } = await supabase.rpc("accept_friend_request", { _request_id: reqId });
-    setActionBusy(null);
-    if (error) {
-      toast.error(error.message.replace(/^.*?:\s*/, ""));
-      return;
-    }
-    const sender = data as unknown as Profile;
-    toast.success(`${sender?.display_name ?? "友だち"} を追加しました！`);
-    void load();
-  };
-
-  // 申請の拒否
-  const rejectReq = async (reqId: string) => {
-    setActionBusy(reqId);
-    const { error } = await supabase.rpc("reject_friend_request", { _request_id: reqId });
-    setActionBusy(null);
-    if (error) {
-      toast.error("処理できませんでした");
-      return;
-    }
-    toast.info("申請をお断りしました");
-    void load();
-  };
-
-  // 送信した申請の取り消し
-  const cancelReq = async (reqId: string) => {
-    setActionBusy(reqId);
-    const { error } = await supabase.rpc("cancel_friend_request", { _request_id: reqId });
-    setActionBusy(null);
-    if (error) {
-      toast.error("取り消せませんでした");
-      return;
-    }
-    toast.info("申請を取り消しました");
-    void load();
-  };
-
-  const shareMyId = async () => {
-    const friendCode = profile?.friend_code;
-    if (!friendCode) return;
-    const text = `RINE で友だちになろう！わたしのID: ${friendCode}\n${window.location.origin}`;
     try {
-      if (navigator.share) {
-        await navigator.share({ title: "RINE", text });
+      const clean = trimmed.toUpperCase();
+      let target: Profile | null = null;
+
+      if (/^[A-Z0-9]{8}$/.test(clean)) {
+        const { data } = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("friend_code", clean)
+          .maybeSingle();
+        target = data as Profile | null;
+      }
+
+      if (!target) {
+        const { data } = await supabase
+          .from("profiles")
+          .select("*")
+          .ilike("display_name", trimmed)
+          .limit(1);
+        target = (data?.[0] as Profile | null) ?? null;
+      }
+
+      if (!target) {
+        toast.error("ユーザーが見つかりませんでした");
         return;
       }
-      await navigator.clipboard.writeText(friendCode);
-      toast.success("IDをコピーしました");
-    } catch {
-      toast.error("コピーできませんでした");
+
+      if (target.id === user.id) {
+        toast.error("自分自身には申請できません");
+        return;
+      }
+
+      if (friends.some((f) => f.id === target?.id)) {
+        toast.info("すでに友だちです");
+        return;
+      }
+
+      const { data: existing } = await supabase
+        .from("friend_requests")
+        .select("id, status")
+        .eq("sender_id", user.id)
+        .eq("receiver_id", target.id)
+        .eq("status", "pending")
+        .maybeSingle();
+
+      if (existing) {
+        toast.info("すでに申請を送信済みです（相手の承認をお待ちください）");
+        return;
+      }
+
+      const { error } = await supabase.from("friend_requests").insert({
+        sender_id: user.id,
+        receiver_id: target.id,
+        status: "pending",
+      });
+
+      if (error) {
+        toast.error("申請の送信に失敗しました: " + error.message);
+        return;
+      }
+
+      toast.success(`${target.display_name} さんに友だち申請を送りました！`);
+      setCode("");
+      setOpen(false);
+      void load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const acceptReq = async (reqId: string) => {
+    if (!user) return;
+    setActionBusy(reqId);
+    try {
+      const { data: req } = await supabase
+        .from("friend_requests")
+        .select("sender_id, receiver_id")
+        .eq("id", reqId)
+        .single();
+
+      if (!req) return;
+
+      const { error: insErr } = await supabase.from("friendships").insert([
+        { user_id: req.receiver_id, friend_id: req.sender_id },
+        { user_id: req.sender_id, friend_id: req.receiver_id },
+      ]);
+
+      if (insErr) {
+        toast.error("友だち追加に失敗しました: " + insErr.message);
+        return;
+      }
+
+      await supabase
+        .from("friend_requests")
+        .update({ status: "accepted" })
+        .eq("id", reqId);
+
+      toast.success("友だち申請を承認しました！");
+      void load();
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
+  const rejectReq = async (reqId: string) => {
+    setActionBusy(reqId);
+    try {
+      await supabase
+        .from("friend_requests")
+        .update({ status: "rejected" })
+        .eq("id", reqId);
+      toast.info("申請を拒否しました");
+      void load();
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
+  const cancelReq = async (reqId: string) => {
+    setActionBusy(reqId);
+    try {
+      await supabase.from("friend_requests").delete().eq("id", reqId);
+      toast.info("申請を取り消しました");
+      void load();
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
+  const shareMyId = () => {
+    if (!profile?.friend_code) return;
+    const text = `RINEで友だちになろう！\nフレンドID: ${profile.friend_code}\n${window.location.origin}`;
+    if (navigator.share) {
+      navigator.share({ title: "RINEのフレンドID", text }).catch(() => {});
+    } else {
+      navigator.clipboard.writeText(profile.friend_code);
+      toast.success("フレンドIDをコピーしました！");
     }
   };
 
@@ -211,12 +286,11 @@ function FriendsPage() {
       action={
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
-            <Button variant="brand" size="sm" className="rounded-full">
-              <UserPlus className="mr-1 size-4" />
-              追加
+            <Button size="icon" variant="ghost" className="rounded-full" aria-label="友だち追加">
+              <UserPlus className="size-5" />
             </Button>
           </DialogTrigger>
-          <DialogContent className="rounded-3xl">
+          <DialogContent className="sm:max-w-md">
             <DialogHeader>
               <DialogTitle>IDで友だちを検索して申請</DialogTitle>
               <DialogDescription>
@@ -275,8 +349,30 @@ function FriendsPage() {
 
         {/* 友だち一覧タブ */}
         <TabsContent value="friends" className="mt-2">
+          {/* Keepメモ（自分専用）カードを最上部にピン留め */}
+          <div className="px-4 pt-1 pb-2">
+            <Link
+              to="/keep"
+              className="flex items-center gap-3 rounded-2xl border border-border/80 bg-card p-3 shadow-sm hover:bg-muted/40 transition-colors"
+            >
+              <div className="flex size-11 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                <Pin className="size-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <p className="font-semibold text-sm">Keepメモ</p>
+                  <span className="rounded-full bg-muted px-1.5 py-0.2 text-[10px] text-muted-foreground">自分専用</span>
+                </div>
+                <p className="truncate text-xs text-muted-foreground">
+                  下書き・リンク・ToDoを端末内に保存（通信量0）
+                </p>
+              </div>
+              <span className="text-xs text-primary font-medium">開く ›</span>
+            </Link>
+          </div>
+
           {friends.length === 0 ? (
-            <div className="flex flex-col items-center gap-3 px-8 py-16 text-center">
+            <div className="flex flex-col items-center gap-3 px-8 py-12 text-center">
               <UserPlus className="size-12 text-muted-foreground/40" />
               <p className="text-base font-bold">まだ友だちがいません</p>
               <p className="text-sm text-muted-foreground">
