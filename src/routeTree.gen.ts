@@ -16,6 +16,7 @@ import { Route as AuthRouteImport } from './routes/auth'
 import { Route as ContactRouteImport } from './routes/contact'
 import { Route as FriendsRouteImport } from './routes/friends'
 import { Route as GroupsRouteImport } from './routes/groups'
+import { Route as KeepRouteImport } from './routes/keep'
 import { Route as OpenRouteImport } from './routes/open'
 import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as ProfileRouteImport } from './routes/profile'
@@ -58,6 +59,11 @@ const FriendsRoute = FriendsRouteImport.update({
 const GroupsRoute = GroupsRouteImport.update({
   id: '/groups',
   path: '/groups',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const KeepRoute = KeepRouteImport.update({
+  id: '/keep',
+  path: '/keep',
   getParentRoute: () => rootRouteImport,
 } as any)
 const OpenRoute = OpenRouteImport.update({
@@ -109,6 +115,7 @@ export interface FileRoutesByFullPath {
   '/contact': typeof ContactRoute
   '/friends': typeof FriendsRoute
   '/groups': typeof GroupsRoute
+  '/keep': typeof KeepRoute
   '/open': typeof OpenRoute
   '/privacy': typeof PrivacyRoute
   '/profile': typeof ProfileRoute
@@ -126,6 +133,7 @@ export interface FileRoutesByTo {
   '/contact': typeof ContactRoute
   '/friends': typeof FriendsRoute
   '/groups': typeof GroupsRoute
+  '/keep': typeof KeepRoute
   '/open': typeof OpenRoute
   '/privacy': typeof PrivacyRoute
   '/profile': typeof ProfileRoute
@@ -144,6 +152,7 @@ export interface FileRoutesById {
   '/contact': typeof ContactRoute
   '/friends': typeof FriendsRoute
   '/groups': typeof GroupsRoute
+  '/keep': typeof KeepRoute
   '/open': typeof OpenRoute
   '/privacy': typeof PrivacyRoute
   '/profile': typeof ProfileRoute
@@ -163,6 +172,7 @@ export interface FileRouteTypes {
     | '/contact'
     | '/friends'
     | '/groups'
+    | '/keep'
     | '/open'
     | '/privacy'
     | '/profile'
@@ -180,6 +190,7 @@ export interface FileRouteTypes {
     | '/contact'
     | '/friends'
     | '/groups'
+    | '/keep'
     | '/open'
     | '/privacy'
     | '/profile'
@@ -197,6 +208,7 @@ export interface FileRouteTypes {
     | '/contact'
     | '/friends'
     | '/groups'
+    | '/keep'
     | '/open'
     | '/privacy'
     | '/profile'
@@ -215,6 +227,7 @@ export interface RootRouteChildren {
   ContactRoute: typeof ContactRoute
   FriendsRoute: typeof FriendsRoute
   GroupsRoute: typeof GroupsRoute
+  KeepRoute: typeof KeepRoute
   OpenRoute: typeof OpenRoute
   PrivacyRoute: typeof PrivacyRoute
   ProfileRoute: typeof ProfileRoute
@@ -274,6 +287,13 @@ declare module '@tanstack/react-router' {
       path: '/groups'
       fullPath: '/groups'
       preLoaderRoute: typeof GroupsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/keep': {
+      id: '/keep'
+      path: '/keep'
+      fullPath: '/keep'
+      preLoaderRoute: typeof KeepRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/open': {
@@ -343,6 +363,7 @@ const rootRouteChildren: RootRouteChildren = {
   ContactRoute: ContactRoute,
   FriendsRoute: FriendsRoute,
   GroupsRoute: GroupsRoute,
+  KeepRoute: KeepRoute,
   OpenRoute: OpenRoute,
   PrivacyRoute: PrivacyRoute,
   ProfileRoute: ProfileRoute,
