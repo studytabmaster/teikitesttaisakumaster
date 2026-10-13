@@ -1,4 +1,4 @@
-export const CLOUDINARY_CLOUD_NAME = "P6ZR2KDZ";
+export const CLOUDINARY_CLOUD_NAME = "pfaqylud";
 export const CLOUDINARY_UPLOAD_PRESET = "rine_preset";
 
 /**
