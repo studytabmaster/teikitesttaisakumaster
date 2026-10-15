@@ -103,57 +103,76 @@ function AdminPage() {
   const [query, setQuery] = useState("");
   const [userFilter, setUserFilter] = useState<"all" | "banned" | "admin">("all");
 
-  const [stats, setStats] = useState<Awaited<ReturnType<typeof adminStats>> | null>(null);
+  const [messages, setMessages] = useState<AdminMessage[]>([]);
+  const [msgQuery, setMsgQuery] = useState("");
+  const [searchingMsg, setSearchingMsg] = useState(false);
 
   const [groups, setGroups] = useState<AdminGroup[]>([]);
   const [groupQuery, setGroupQuery] = useState("");
-  const [openOnly, setOpenOnly] = useState(true);
-
-  const [messages, setMessages] = useState<AdminMessage[]>([]);
-  const [msgQuery, setMsgQuery] = useState("");
-  const [msgLoading, setMsgLoading] = useState(false);
+  const [openOnly, setOpenOnly] = useState(false);
 
   const [announcement, setAnnouncement] = useState("");
   const [pollOptions, setPollOptions] = useState<string[]>(["", ""]);
   const [enablePoll, setEnablePoll] = useState(false);
-  const publishAnnouncement = useServerFn(adminPublishAnnouncement);
-  const closeAnnouncement = useServerFn(adminCloseAnnouncement);
   const [sendingAnnounce, setSendingAnnounce] = useState(false);
 
+  const [stats, setStats] = useState<{
+    users: number;
+    groups: number;
+    openGroups: number;
+    messages: number;
+    todayMessages: number;
+    openReports: number;
+    bans: number;
+  } | null>(null);
+
   const unlock = useServerFn(unlockAdmin);
+  const getStats = useServerFn(adminStats);
   const listUsers = useServerFn(adminListUsers);
-  const setRole = useServerFn(adminSetRole);
   const setBan = useServerFn(adminSetBan);
+  const setRole = useServerFn(adminSetRole);
+  const searchMsgs = useServerFn(adminSearchMessages);
+  const removeMessage = useServerFn(adminDeleteMessage);
   const wipeMessages = useServerFn(adminDeleteUserMessages);
-  const loadStats = useServerFn(adminStats);
   const listGroups = useServerFn(adminListGroups);
-  const removeGroup = useServerFn(adminDeleteGroup);
   const setGroupOpen = useServerFn(adminSetGroupOpen);
   const clearGroupMessages = useServerFn(adminClearGroupMessages);
-  const searchMessages = useServerFn(adminSearchMessages);
-  const removeMessage = useServerFn(adminDeleteMessage);
-  const broadcastAnnouncement = useServerFn(adminBroadcastToOpenGroups);
+  const removeGroup = useServerFn(adminDeleteGroup);
+  const publishAnnouncement = useServerFn(adminPublishAnnouncement);
+  const closeAnnouncement = useServerFn(adminCloseAnnouncement);
+  const broadcastOpen = useServerFn(adminBroadcastToOpenGroups);
 
   const loadReports = useCallback(async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("reports")
       .select("*")
-      .order("created_at", { ascending: false });
-    const rows = (data ?? []) as Report[];
-    setReports(rows);
-    const ids = [...new Set(rows.flatMap((r) => [r.reporter_id, r.reported_id]))];
-    if (ids.length > 0) {
-      const { data: ps } = await supabase.from("profiles").select("*").in("id", ids);
-      const map: Record<string, Profile> = {};
-      for (const p of (ps ?? []) as Profile[]) map[p.id] = p;
-      setProfiles(map);
+      .order("created_at", { ascending: false })
+      .limit(100);
+    if (error) {
+      toast.error("通報の取得に失敗しました");
+      return;
+    }
+    const reps = (data as Report[]) ?? [];
+    setReports(reps);
+
+    const ids = Array.from(new Set(reps.flatMap((r) => [r.reporter_id, r.reported_id]).filter(Boolean)));
+    if (ids.length) {
+      const { data: profs } = await supabase.from("profiles").select("*").in("id", ids);
+      if (profs) {
+        setProfiles((prev) => {
+          const map = { ...prev };
+          for (const p of profs as Profile[]) map[p.id] = p;
+          return map;
+        });
+      }
     }
   }, []);
 
   const loadUsers = useCallback(
-    async (q: string) => {
+    async (q = "") => {
       try {
-        setUsers(await listUsers({ data: { q } }));
+        const list = await listUsers({ data: { query: q, limit: 50 } });
+        setUsers(list);
       } catch (e) {
         toast.error(errorMessage(e));
       }
@@ -162,9 +181,10 @@ function AdminPage() {
   );
 
   const loadGroups = useCallback(
-    async (q: string, onlyOpen: boolean) => {
+    async (q = "", open?: boolean) => {
       try {
-        setGroups(await listGroups({ data: { q, openOnly: onlyOpen } }));
+        const list = await listGroups({ data: { query: q, openOnly: open, limit: 50 } });
+        setGroups(list);
       } catch (e) {
         toast.error(errorMessage(e));
       }
@@ -173,28 +193,29 @@ function AdminPage() {
   );
 
   const loadMessages = useCallback(
-    async (q: string) => {
-      setMsgLoading(true);
+    async (q = "") => {
+      setSearchingMsg(true);
       try {
-        const res = await searchMessages({ data: { q } });
-        setMessages(res);
+        const list = await searchMsgs({ data: { query: q, limit: 50 } });
+        setMessages(list);
       } catch (e) {
         toast.error(errorMessage(e));
       } finally {
-        setMsgLoading(false);
+        setSearchingMsg(false);
       }
     },
-    [searchMessages],
+    [searchMsgs],
   );
 
+  const loadStats = useCallback(async () => {
+    try {
+      const s = await getStats();
+      setStats(s);
+    } catch {}
+  }, [getStats]);
+
   const loadAll = useCallback(async () => {
-    await Promise.all([
-      loadReports(),
-      loadUsers(""),
-      loadGroups("", true),
-      loadMessages(""),
-      loadStats({}).then(setStats).catch(() => {}),
-    ]);
+    await Promise.all([loadReports(), loadUsers(), loadGroups(), loadMessages(), loadStats()]);
   }, [loadReports, loadUsers, loadGroups, loadMessages, loadStats]);
 
   useEffect(() => {
@@ -219,6 +240,28 @@ function AdminPage() {
       toast.error(errorMessage(e));
     } finally {
       setBusy(false);
+    }
+  };
+
+  // 全員の画面を強制再読み込みさせる
+  const handleForceReloadAll = async () => {
+    if (
+      !window.confirm(
+        "接続中の全ユーザーのブラウザ画面を強制再読み込みさせます。よろしいですか？\n（アップデートや緊急メンテナンス時に有効です）"
+      )
+    )
+      return;
+    try {
+      const ch = supabase.channel("system-control");
+      await ch.subscribe();
+      await ch.send({
+        type: "broadcast",
+        event: "force_reload",
+        payload: { triggered_at: new Date().toISOString() },
+      });
+      toast.success("全ユーザーへ強制再読み込みシグナルを送信しました！");
+    } catch (e: any) {
+      toast.error("シグナル送信に失敗しました: " + e.message);
     }
   };
 
@@ -324,7 +367,7 @@ function AdminPage() {
     }
   };
 
-    const handleSendAnnouncement = async () => {
+  const handleSendAnnouncement = async () => {
     const text = announcement.trim();
     if (!text) return;
     const options = enablePoll ? pollOptions.filter((o) => o.trim().length > 0) : [];
@@ -413,15 +456,27 @@ function AdminPage() {
     <AppShell
       title="管理者パネル"
       action={
-        <Button
-          variant="ghost"
-          size="sm"
-          className="gap-1.5 text-xs text-muted-foreground"
-          onClick={() => void loadAll()}
-        >
-          <RefreshCw className="size-3.5" />
-          更新
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={handleForceReloadAll}
+            className="h-8 gap-1.5 text-xs font-semibold shadow-xs"
+            title="接続中の全ユーザーのブラウザを一斉リロードします"
+          >
+            <RefreshCw className="size-3.5" />
+            <span className="hidden sm:inline">全員画面強制再読み込み</span>
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="gap-1.5 text-xs text-muted-foreground"
+            onClick={() => void loadAll()}
+          >
+            <RefreshCw className="size-3.5" />
+            更新
+          </Button>
+        </div>
       }
     >
       <div className="mx-auto max-w-4xl space-y-6 p-4 sm:p-6">
@@ -471,15 +526,15 @@ function AdminPage() {
                   {stats?.openReports ?? 0}
                 </p>
               </div>
-<div className="rounded-xl border bg-card p-4">
-              <p className="text-xs text-muted-foreground">利用停止中ユーザー</p>
-              <p className="mt-1 text-2xl font-bold">{stats?.bans ?? 0}</p>
+              <div className="rounded-xl border bg-card p-4">
+                <p className="text-xs text-muted-foreground">利用停止中ユーザー</p>
+                <p className="mt-1 text-2xl font-bold">{stats?.bans ?? 0}</p>
+              </div>
             </div>
-          </div>
 
-          <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
+            <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
                   <Megaphone className="size-5 text-primary" />
                   <h3 className="font-semibold text-sm">全ユーザー画面上部へのアナウンス・投票</h3>
                 </div>
@@ -500,43 +555,49 @@ function AdminPage() {
                 rows={3}
                 value={announcement}
                 onChange={(e) => setAnnouncement(e.target.value)}
+                className="text-sm"
               />
 
-              {/* 投票アンケートトグル */}
-              <div className="space-y-2 pt-2 border-t">
-                <label className="flex items-center gap-2 text-xs font-medium cursor-pointer">
+              <div className="space-y-2 pt-2 border-t border-border/50">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="poll-toggle" className="text-xs font-semibold cursor-pointer">
+                    🗳️ 投票機能をつける
+                  </Label>
                   <input
+                    id="poll-toggle"
                     type="checkbox"
                     checked={enablePoll}
                     onChange={(e) => setEnablePoll(e.target.checked)}
-                    className="rounded text-primary"
+                    className="size-4 rounded border-border"
                   />
-                  アンケート・投票を追加する
-                </label>
+                </div>
 
                 {enablePoll && (
-                  <div className="space-y-2 pl-4 border-l-2 border-primary/20">
-                    <p className="text-[11px] text-muted-foreground">選択肢を2〜4個入力してください</p>
-                    {pollOptions.map((opt, i) => (
-                      <div key={i} className="flex gap-2">
+                  <div className="space-y-2 pl-2 border-l-2 border-primary/40">
+                    <p className="text-[11px] text-muted-foreground">
+                      選択肢を2つ以上入力してください（最大4つ）
+                    </p>
+                    {pollOptions.map((opt, idx) => (
+                      <div key={idx} className="flex items-center gap-2">
                         <Input
-                          placeholder={`選択肢 ${i + 1}`}
+                          placeholder={`選択肢 ${idx + 1}`}
                           value={opt}
                           onChange={(e) => {
                             const next = [...pollOptions];
-                            next[i] = e.target.value;
+                            next[idx] = e.target.value;
                             setPollOptions(next);
                           }}
                           className="h-8 text-xs"
                         />
                         {pollOptions.length > 2 && (
                           <Button
+                            type="button"
                             variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                            onClick={() => setPollOptions(pollOptions.filter((_, idx) => idx !== i))}
+                            size="sm"
+                            className="h-8 px-2 text-xs text-muted-foreground hover:text-destructive"
+                            onClick={() => setPollOptions(pollOptions.filter((_, i) => i !== idx))}
                           >
-                            <Trash2 className="size-3.5" />
+                            削除
                           </Button>
                         )}
                       </div>
@@ -547,10 +608,9 @@ function AdminPage() {
                         variant="outline"
                         size="sm"
                         onClick={() => setPollOptions([...pollOptions, ""])}
-                        className="h-7 text-xs gap-1"
+                        className="h-7 text-[11px] gap-1"
                       >
-                        <Plus className="size-3" />
-                        選択肢を追加
+                        <Plus className="size-3" /> 選択肢を追加
                       </Button>
                     )}
                   </div>
@@ -565,7 +625,7 @@ function AdminPage() {
                   className="gap-1.5"
                 >
                   <Megaphone className="size-3.5" />
-                  {sendingAnnounce ? "公開中…" : "画面上部に固定公開する"}
+                  {sendingAnnounce ? "送信中…" : "全ユーザーへ公開"}
                 </Button>
               </div>
             </div>
@@ -573,107 +633,85 @@ function AdminPage() {
 
           {/* 2. 通報タブ */}
           <TabsContent value="reports" className="space-y-4 pt-4">
-            <div className="flex gap-1.5 border-b pb-2 text-xs">
-              {(["all", "open", "reviewing", "resolved"] as const).map((st) => (
-                <Button
-                  key={st}
-                  variant={reportFilter === st ? "default" : "ghost"}
-                  size="sm"
-                  className="h-7 text-xs"
-                  onClick={() => setReportFilter(st)}
-                >
-                  {st === "all" ? "すべて" : STATUS_LABEL[st]}
-                  {st === "open" && reports.filter((r) => r.status === "open").length > 0 && (
-                    <span className="ml-1 text-[10px]">({reports.filter((r) => r.status === "open").length})</span>
-                  )}
-                </Button>
-              ))}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-1">
+                {(["all", "open", "reviewing", "resolved"] as const).map((st) => (
+                  <Button
+                    key={st}
+                    variant={reportFilter === st ? "secondary" : "ghost"}
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => setReportFilter(st)}
+                  >
+                    {st === "all" ? "すべて" : STATUS_LABEL[st]}
+                  </Button>
+                ))}
+              </div>
             </div>
 
             {filteredReports.length === 0 ? (
-              <p className="py-12 text-center text-sm text-muted-foreground">該当する通報はありません</p>
+              <p className="py-12 text-center text-sm text-muted-foreground">通報はありません</p>
             ) : (
               <div className="space-y-3">
                 {filteredReports.map((r) => {
                   const reporter = profiles[r.reporter_id];
                   const reported = profiles[r.reported_id];
                   return (
-                    <div key={r.id} className="rounded-xl border bg-card p-4 space-y-3">
+                    <div key={r.id} className="rounded-xl border bg-card p-4 space-y-2">
                       <div className="flex items-start justify-between gap-2">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <Badge
-                              variant={
-                                r.status === "open"
-                                  ? "destructive"
-                                  : r.status === "reviewing"
+                        <div>
+                          <Badge
+                            variant={
+                              r.status === "open"
+                                ? "destructive"
+                                : r.status === "reviewing"
                                   ? "secondary"
                                   : "outline"
-                              }
-                            >
-                              {STATUS_LABEL[r.status] ?? r.status}
-                            </Badge>
-                            <span className="text-xs text-muted-foreground">{formatListTime(r.created_at)}</span>
-                          </div>
-                          <p className="text-sm font-semibold">理由: {r.reason}</p>
+                            }
+                            className="text-[10px]"
+                          >
+                            {STATUS_LABEL[r.status] ?? r.status}
+                          </Badge>
+                          <span className="ml-2 font-semibold text-sm">{r.reason}</span>
                         </div>
-                        <div className="flex gap-1">
-                          {(["open", "reviewing", "resolved"] as const).map((st) => (
+                        <span className="text-[10px] text-muted-foreground">
+                          {formatListTime(r.created_at)}
+                        </span>
+                      </div>
+
+                      <p className="text-xs text-foreground/90 whitespace-pre-wrap rounded-md bg-muted/40 p-2">
+                        {r.detail}
+                      </p>
+
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground pt-1">
+                        <div>
+                          通報者: {reporter?.display_name ?? r.reporter_id.slice(0, 8)} → 対象:{" "}
+                          <span className="font-semibold text-foreground">
+                            {reported?.display_name ?? r.reported_id?.slice(0, 8) ?? "不明"}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          {r.status !== "resolved" && (
                             <Button
-                              key={st}
-                              variant={r.status === st ? "secondary" : "ghost"}
+                              variant="outline"
                               size="sm"
                               className="h-7 text-xs"
-                              onClick={() => void setStatus(r.id, st)}
+                              onClick={() => void setStatus(r.id, "resolved")}
                             >
-                              {STATUS_LABEL[st]}
+                              対応完了にする
                             </Button>
-                          ))}
+                          )}
+                          {r.status === "open" && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => void setStatus(r.id, "reviewing")}
+                            >
+                              確認中にする
+                            </Button>
+                          )}
                         </div>
-                      </div>
-
-                      <div className="rounded-lg bg-muted/50 p-2.5 text-xs space-y-1">
-                        <p><span className="text-muted-foreground">通報者:</span> {reporter?.display_name ?? r.reporter_id}</p>
-                        <p><span className="text-muted-foreground">対象者:</span> <span className="font-semibold">{reported?.display_name ?? r.reported_id}</span> ({reported?.friend_code ?? r.reported_code ?? "ID不明"})</p>
-                        {r.detail && <p><span className="text-muted-foreground">詳細:</span> {r.detail}</p>}
-                        {r.context && <p><span className="text-muted-foreground">通報時の文脈:</span> {r.context}</p>}
-                      </div>
-
-                      <div className="flex flex-wrap gap-2 pt-1 border-t">
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          className="h-7 text-xs gap-1"
-                          onClick={() => {
-                            const u = users.find((x) => x.id === r.reported_id);
-                            if (u) {
-                              void toggleBan(u);
-                            } else {
-                              const days = prompt("停止する日数（空欄または0で無期限停止）", "7");
-                              if (days === null) return;
-                              void setBan({
-                                data: {
-                                  userId: r.reported_id,
-                                  banned: true,
-                                  reason: `通報対応 (${r.reason})`,
-                                  days: Number(days) || 0,
-                                },
-                              }).then(() => toast.success("対象者を停止しました"));
-                            }
-                          }}
-                        >
-                          <Ban className="size-3" />
-                          対象者を停止
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-7 text-xs gap-1 text-destructive hover:bg-destructive/10"
-                          onClick={() => void deleteUserAllMessages(r.reported_id, reported?.display_name ?? "対象者")}
-                        >
-                          <Trash2 className="size-3" />
-                          対象者の投稿を全削除
-                        </Button>
                       </div>
                     </div>
                   );
@@ -684,50 +722,56 @@ function AdminPage() {
 
           {/* 3. ユーザー管理タブ */}
           <TabsContent value="users" className="space-y-4 pt-4">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex gap-2 flex-1 max-w-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 flex-1 max-w-sm">
                 <Input
-                  placeholder="名前・ID・フレンドコードで検索..."
+                  placeholder="ユーザー名・IDで検索..."
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && void loadUsers(query)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void loadUsers(query);
+                  }}
                   className="h-8 text-xs"
                 />
                 <Button size="sm" className="h-8 px-3" onClick={() => void loadUsers(query)}>
                   <Search className="size-3.5" />
                 </Button>
               </div>
-              <div className="flex gap-1">
+
+              <div className="flex items-center gap-1">
                 {(["all", "banned", "admin"] as const).map((f) => (
                   <Button
                     key={f}
-                    variant={userFilter === f ? "default" : "ghost"}
+                    variant={userFilter === f ? "secondary" : "ghost"}
                     size="sm"
                     className="h-7 text-xs"
                     onClick={() => setUserFilter(f)}
                   >
-                    {f === "all" ? "全員" : f === "banned" ? "停止中" : "管理者"}
+                    {f === "all" ? "すべて" : f === "banned" ? "停止中" : "管理者"}
                   </Button>
                 ))}
               </div>
             </div>
 
             {filteredUsers.length === 0 ? (
-              <p className="py-12 text-center text-sm text-muted-foreground">該当するユーザーはいません</p>
+              <p className="py-12 text-center text-sm text-muted-foreground">ユーザーが見つかりませんでした</p>
             ) : (
               <div className="space-y-2">
                 {filteredUsers.map((u) => (
-                  <div key={u.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border bg-card p-3">
+                  <div
+                    key={u.id}
+                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border bg-card p-3"
+                  >
                     <div className="flex items-center gap-3 min-w-0">
-                      <Avatar className="size-10">
-                        {u.avatar_url && <AvatarImage src={u.avatar_url} />}
+                      <Avatar className="size-9">
+                        <AvatarImage src={u.avatar_url ?? undefined} />
                         <AvatarFallback>{initials(u.display_name)}</AvatarFallback>
                       </Avatar>
-                      <div className="min-w-0 space-y-0.5">
-                        <div className="flex items-center gap-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
                           <p className="font-semibold text-sm truncate">{u.display_name}</p>
                           {u.role && (
-                            <Badge variant={u.role === "admin" ? "default" : "secondary"} className="text-[10px]">
+                            <Badge variant="outline" className="text-[10px] text-primary">
                               {u.role === "admin" ? "管理者" : "モデレーター"}
                             </Badge>
                           )}
@@ -737,14 +781,9 @@ function AdminPage() {
                             </Badge>
                           )}
                         </div>
-                        <p className="text-xs text-muted-foreground truncate">
-                          ID: {u.friend_code} {u.username ? `(@${u.username})` : ""} · 登録: {formatListTime(u.created_at)}
+                        <p className="text-[11px] text-muted-foreground">
+                          ID: {u.custom_id || u.id.slice(0, 8)} · 登録: {formatListTime(u.created_at)}
                         </p>
-                        {u.banned && u.ban_reason && (
-                          <p className="text-xs text-destructive">
-                            理由: {u.ban_reason} {u.ban_until ? `(${new Date(u.ban_until).toLocaleDateString()}まで)` : "(無期限)"}
-                          </p>
-                        )}
                       </div>
                     </div>
 
@@ -756,28 +795,25 @@ function AdminPage() {
                         onClick={() => void toggleBan(u)}
                       >
                         <Ban className="size-3" />
-                        {u.banned ? "解除" : "停止"}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7 text-xs gap-1"
-                        onClick={() => {
-                          const nextRole = u.role === "admin" ? null : u.role === "moderator" ? "admin" : "moderator";
-                          void changeRole(u, nextRole);
-                        }}
-                      >
-                        <ShieldCheck className="size-3" />
-                        {u.role === "admin" ? "権限剥奪" : u.role === "moderator" ? "管理者に昇格" : "モデレーター"}
+                        {u.banned ? "停止解除" : "利用停止"}
                       </Button>
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="h-7 text-xs text-destructive hover:bg-destructive/10"
-                        title="投稿全削除"
+                        className="h-7 text-xs text-destructive hover:bg-destructive/10 gap-1"
                         onClick={() => void deleteUserAllMessages(u.id, u.display_name)}
                       >
                         <Trash2 className="size-3" />
+                        全投稿削除
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-xs gap-1"
+                        onClick={() => void changeRole(u, u.role === "admin" ? null : "admin")}
+                      >
+                        <ShieldCheck className="size-3" />
+                        {u.role === "admin" ? "権限剥奪" : "管理者任命"}
                       </Button>
                     </div>
                   </div>
@@ -788,44 +824,43 @@ function AdminPage() {
 
           {/* 4. 投稿監視タブ */}
           <TabsContent value="messages" className="space-y-4 pt-4">
-            <div className="flex gap-2 max-w-sm">
+            <div className="flex items-center gap-2 max-w-sm">
               <Input
-                placeholder="本文で検索（荒らしキーワードなど）..."
+                placeholder="メッセージ本文で検索..."
                 value={msgQuery}
                 onChange={(e) => setMsgQuery(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && void loadMessages(msgQuery)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void loadMessages(msgQuery);
+                }}
                 className="h-8 text-xs"
               />
-              <Button size="sm" className="h-8 px-3" onClick={() => void loadMessages(msgQuery)} disabled={msgLoading}>
+              <Button size="sm" className="h-8 px-3" onClick={() => void loadMessages(msgQuery)}>
                 <Search className="size-3.5" />
               </Button>
             </div>
 
-            {msgLoading ? (
+            {searchingMsg ? (
               <p className="py-12 text-center text-sm text-muted-foreground">検索中…</p>
             ) : messages.length === 0 ? (
-              <p className="py-12 text-center text-sm text-muted-foreground">投稿が見つかりませんでした</p>
+              <p className="py-12 text-center text-sm text-muted-foreground">該当する投稿はありません</p>
             ) : (
               <div className="space-y-2">
                 {messages.map((m) => (
-                  <div key={`${m.kind}-${m.id}`} className="flex items-start justify-between gap-3 rounded-xl border bg-card p-3">
+                  <div key={m.id} className="flex items-start justify-between gap-3 rounded-xl border bg-card p-3">
                     <div className="min-w-0 space-y-1">
-                      <div className="flex items-center gap-2">
-                        <Badge variant={m.kind === "group" ? "secondary" : "outline"} className="text-[10px]">
-                          {m.kind === "group" ? `オプチャ: ${m.group_name ?? "グループ"}` : "個人DM"}
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="font-semibold">{m.sender_name}</span>
+                        <Badge variant="outline" className="text-[9px]">
+                          {m.kind === "group" ? "グループ" : "DM"}
                         </Badge>
-                        <span className="font-semibold text-xs">{m.sender_name}</span>
                         <span className="text-[10px] text-muted-foreground">{formatListTime(m.created_at)}</span>
                       </div>
-                      <p className="text-xs break-words whitespace-pre-wrap">{m.content || "(テキストなし)"}</p>
-                      {m.media_type && (
-                        <p className="text-[10px] text-muted-foreground">📎 メディア: {m.media_type}</p>
-                      )}
+                      <p className="text-xs text-foreground/90 whitespace-pre-wrap">{m.content}</p>
                     </div>
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-7 text-xs text-destructive hover:bg-destructive/10 shrink-0"
+                      className="h-7 text-xs text-destructive hover:bg-destructive/10 gap-1"
                       onClick={() => void deleteSingleMessage(m)}
                     >
                       <Trash2 className="size-3" />
@@ -839,13 +874,15 @@ function AdminPage() {
 
           {/* 5. ルーム管理タブ */}
           <TabsContent value="groups" className="space-y-4 pt-4">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex gap-2 flex-1 max-w-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 flex-1 max-w-sm">
                 <Input
                   placeholder="ルーム名で検索..."
                   value={groupQuery}
                   onChange={(e) => setGroupQuery(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && void loadGroups(groupQuery, openOnly)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void loadGroups(groupQuery, openOnly);
+                  }}
                   className="h-8 text-xs"
                 />
                 <Button size="sm" className="h-8 px-3" onClick={() => void loadGroups(groupQuery, openOnly)}>
