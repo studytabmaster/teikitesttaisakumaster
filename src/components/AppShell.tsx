@@ -2,8 +2,20 @@ import { AnnouncementBanner } from "@/components/AnnouncementBanner";
 import { AdBanner } from "@/components/AdBanner";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
-import { Compass, MessageCircle, Pin, Search, Users, UsersRound, UserRound, X } from "lucide-react";
+import {
+  Compass,
+  MessageCircle,
+  Pin,
+  Play,
+  Search,
+  Users,
+  UsersRound,
+  UserRound,
+  X,
+} from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 const TABS = [
@@ -32,6 +44,23 @@ export function AppShell({
   useEffect(() => {
     if (!loading && !session) void navigate({ to: "/auth" });
   }, [loading, session, navigate]);
+
+  // 管理者からの「全員強制再読み込みシグナル」を受信
+  useEffect(() => {
+    const channel = supabase
+      .channel("system-control")
+      .on("broadcast", { event: "force_reload" }, () => {
+        toast.warning("運営により最新バージョンに更新されます...", { duration: 4000 });
+        setTimeout(() => {
+          window.location.reload();
+        }, 1500);
+      })
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, []);
 
   // PCショートカットキー: Alt+1..5 でタブ移動、Ctrl+K / Cmd+K でクイック検索
   useEffect(() => {
@@ -69,6 +98,7 @@ export function AppShell({
   }
 
   const PALETTE_COMMANDS = [
+    { label: "YouTubeを開く（教育・プロキシ対応）", to: "/youtube", icon: Play },
     { label: "Keepメモを開く（自分専用・通信量0）", to: "/keep", icon: Pin },
     { label: "トーク一覧", to: "/", icon: MessageCircle },
     { label: "友だちリスト", to: "/friends", icon: Users },
@@ -86,6 +116,7 @@ export function AppShell({
       <header className="sticky top-0 z-20 flex items-center justify-between border-b border-border bg-background/90 px-5 py-3 backdrop-blur">
         <h1 className="text-xl font-bold tracking-tight">{title}</h1>
         <div className="flex items-center gap-1.5">
+          {/* Keepボタン */}
           <Link
             to="/keep"
             className="flex items-center gap-1 rounded-full bg-muted/80 px-2.5 py-1 text-xs font-semibold text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
@@ -94,6 +125,17 @@ export function AppShell({
             <Pin className="size-3.5 text-primary" />
             <span>Keep</span>
           </Link>
+
+          {/* YouTubeボタン（Keepの横に追加） */}
+          <Link
+            to="/youtube"
+            className="flex items-center gap-1 rounded-full bg-red-500/10 px-2.5 py-1 text-xs font-semibold text-red-500 hover:bg-red-500/20 transition-colors"
+            title="YouTubeビューワーを開く"
+          >
+            <Play className="size-3.5 fill-red-500 text-red-500" />
+            <span>YouTube</span>
+          </Link>
+
           <button
             type="button"
             onClick={() => setPaletteOpen(true)}
@@ -134,12 +176,12 @@ export function AppShell({
                   to={tab.to}
                   title={`${tab.label} (${tab.shortcut})`}
                   className={cn(
-                    "flex flex-col items-center gap-1 py-3 text-[11px] font-medium transition-colors",
+                    "flex flex-col items-center py-2 transition-colors",
                     active ? "text-primary" : "text-muted-foreground hover:text-foreground",
                   )}
                 >
                   <Icon className="size-5" />
-                  {tab.label}
+                  <span className="mt-0.5 text-[10px] font-medium">{tab.label}</span>
                 </Link>
               </li>
             );
@@ -147,38 +189,40 @@ export function AppShell({
         </ul>
       </nav>
 
-      {/* Ctrl+K クイックコマンドパレット */}
+      {/* クイックパレットモーダル (Ctrl+K) */}
       {paletteOpen && (
         <div
-          role="dialog"
-          aria-modal="true"
           className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-20 backdrop-blur-sm"
           onClick={() => setPaletteOpen(false)}
         >
           <div
-            className="w-full max-w-md rounded-2xl border border-border bg-popover shadow-2xl overflow-hidden"
+            className="w-full max-w-md rounded-2xl border border-border bg-background p-3 shadow-2xl animate-in fade-in zoom-in-95"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center border-b border-border px-3 py-2.5">
-              <Search className="size-4 text-muted-foreground mr-2 shrink-0" />
+            <div className="relative mb-2">
+              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
               <input
+                type="text"
                 autoFocus
+                placeholder="どこへ移動しますか？ (YouTube / Keep / トーク...)"
                 value={paletteQuery}
                 onChange={(e) => setPaletteQuery(e.target.value)}
-                placeholder="ページや機能を検索 (Escで閉じる)..."
-                className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                className="w-full rounded-xl border border-border bg-muted/40 py-2 pl-9 pr-8 text-sm outline-none focus:border-primary"
               />
               <button
                 type="button"
                 onClick={() => setPaletteOpen(false)}
-                className="rounded p-1 text-muted-foreground hover:text-foreground"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
               >
                 <X className="size-4" />
               </button>
             </div>
-            <div className="max-h-64 overflow-y-auto p-1.5">
+
+            <div className="space-y-1 max-h-60 overflow-y-auto">
               {filteredCommands.length === 0 ? (
-                <p className="p-4 text-center text-xs text-muted-foreground">該当する機能がありません</p>
+                <div className="py-6 text-center text-xs text-muted-foreground">
+                  見つかりませんでした
+                </div>
               ) : (
                 filteredCommands.map((cmd) => {
                   const Icon = cmd.icon;
@@ -190,15 +234,18 @@ export function AppShell({
                         setPaletteOpen(false);
                         void navigate({ to: cmd.to });
                       }}
-                      className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs hover:bg-accent transition"
+                      className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-foreground hover:bg-muted transition-colors"
                     >
-                      <Icon className="size-4 text-primary shrink-0" />
-                      <span className="flex-1 font-medium">{cmd.label}</span>
-                      <span className="text-[10px] text-muted-foreground">移動 ↵</span>
+                      <Icon className="size-4 text-primary" />
+                      <span>{cmd.label}</span>
                     </button>
                   );
                 })
               )}
+            </div>
+
+            <div className="mt-2 border-t border-border/40 pt-2 text-center text-[10px] text-muted-foreground">
+              Escで閉じる / Alt+1〜5 でタブ直行
             </div>
           </div>
         </div>
