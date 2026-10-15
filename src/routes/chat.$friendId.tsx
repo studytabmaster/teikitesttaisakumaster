@@ -327,14 +327,33 @@ function ChatPage() {
 
     // Cloudinaryに直接アップロード（Supabaseストレージの転送量を完全回避）
 
+    // Cloudinaryへ直接アップロードを試み、失敗時はSupabaseストレージへ安全にフォールバック
     let path = "";
     try {
-      path = await uploadToCloudinary(upload);
-    } catch {
-      setUploading(false);
-      toast.error("アップロードできませんでした");
-      return;
+      const cUrl = await uploadToCloudinary(upload);
+      if (cUrl) path = cUrl;
+    } catch (e) {
+      console.warn("Cloudinary upload failed, falling back:", e);
     }
+
+    if (!path) {
+      const ext = upload.name.split(".").pop() || (isVideo ? "mp4" : "jpg");
+      const storagePath = `${user.id}/${crypto.randomUUID()}.${ext}`;
+      const { error: upErr } = await supabase.storage
+        .from("chat-images")
+        .upload(storagePath, upload, {
+          contentType: upload.type,
+          cacheControl: "31536000",
+        });
+
+      if (upErr) {
+        setUploading(false);
+        toast.error("アップロードできませんでした");
+        return;
+      }
+      path = storagePath;
+    }
+
 
     const parentId = replyTo?.id ?? null;
     setReplyTo(null);
