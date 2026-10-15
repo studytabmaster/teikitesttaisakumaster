@@ -1,125 +1,132 @@
-import { StaffBadge } from "@/components/StaffBadge";
 import { useEffect, useState } from "react";
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { Check, Clock, MessageSquare, Phone, Pin, Share2, UserPlus, Video, X } from "lucide-react";
-import { toast } from "sonner";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { supabase } from "@/integrations/supabase/client";
-import { fetchProfile, fetchProfiles } from "@/lib/profileCache";
 import { useAuth } from "@/hooks/useAuth";
-import { useCall } from "@/components/CallProvider";
-import { useBlocks } from "@/hooks/useBlocks";
-import { AppShell } from "@/components/AppShell";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { initials, type Profile } from "@/lib/rine";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  UserPlus,
+  Share2,
+  Check,
+  X,
+  MessageCircle,
+  Copy,
+  Clock,
+  Pin,
+  FileText,
+  Search,
+} from "lucide-react";
+import { toast } from "sonner";
+import { fetchProfiles, fetchProfile } from "@/lib/profileCache";
+
+interface Profile {
+  id: string;
+  display_name: string;
+  status_message: string | null;
+  avatar_url: string | null;
+  avatar_key?: string | null;
+  friend_code: string | null;
+  created_at: string;
+}
+
+interface FriendRequest {
+  id: string;
+  sender_id: string;
+  receiver_id: string;
+  status: "pending" | "accepted" | "rejected";
+  created_at: string;
+  sender?: Profile;
+  receiver?: Profile;
+}
 
 export const Route = createFileRoute("/friends")({
-  head: () => ({
-    meta: [
-      { title: "友だちリスト｜RINE" },
-      {
-        name: "description",
-        content: "RINE の友だちリスト。フレンドID を入力して申請を送り、承認されるとトークや通話ができます。",
-      },
-      { property: "og:title", content: "友だちリスト｜RINE" },
-      { property: "og:description", content: "フレンドID で友だち申請を送ってトークと通話を始めよう。" },
-    ],
-  }),
   component: FriendsPage,
 });
 
-type IncomingRequest = {
-  id: string;
-  sender_id: string;
-  created_at: string;
-  sender: Profile | null;
-};
-
-type OutgoingRequest = {
-  id: string;
-  receiver_id: string;
-  created_at: string;
-  receiver: Profile | null;
-};
+function initials(name: string) {
+  return name.slice(0, 2).toUpperCase();
+}
 
 function FriendsPage() {
-  const { user, profile } = useAuth();
-  const { startCall } = useCall();
-  const { isBlocked } = useBlocks();
-
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const [profile, setProfile] = useState<Profile | null>(null);
   const [friends, setFriends] = useState<Profile[]>([]);
-  const [incoming, setIncoming] = useState<IncomingRequest[]>([]);
-  const [outgoing, setOutgoing] = useState<OutgoingRequest[]>([]);
+  const [incoming, setIncoming] = useState<FriendRequest[]>([]);
+  const [outgoing, setOutgoing] = useState<FriendRequest[]>([]);
   const [code, setCode] = useState("");
-  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
 
   const load = async () => {
     if (!user) return;
 
-    // 1. 友だち一覧の取得
-    const { data: links } = await supabase
+    const myProf = await fetchProfile(user.id);
+    if (myProf) setProfile(myProf as Profile);
+
+    // 友だち一覧の取得
+    const { data: fships } = await supabase
       .from("friendships")
       .select("friend_id")
       .eq("user_id", user.id);
-    const ids = (links ?? []).map((l) => l.friend_id);
-    if (ids.length > 0) {
-      const { data } = { data: await fetchProfiles(ids).then((r) => r.sort((a, b) => a.display_name.localeCompare(b.display_name))) };
-      setFriends((data ?? []) as Profile[]);
+
+    const fIds = (fships || []).map((x) => x.friend_id);
+    if (fIds.length > 0) {
+      const profMap = await fetchProfiles(fIds);
+      setFriends(Array.from(profMap.values()) as Profile[]);
     } else {
       setFriends([]);
     }
 
-    // 2. 届いた申請の取得
-    const { data: inReqs } = await supabase
+    // 届いた申請
+    const { data: inc } = await supabase
       .from("friend_requests")
-      .select("id, sender_id, created_at")
+      .select("id, sender_id, receiver_id, status, created_at")
       .eq("receiver_id", user.id)
       .eq("status", "pending")
       .order("created_at", { ascending: false });
 
-    if (inReqs && inReqs.length > 0) {
-      const senderIds = inReqs.map((r) => r.sender_id);
-      const { data: senders } = { data: await fetchProfiles(senderIds) };
-      const sMap = new Map((senders ?? []).map((s) => [s.id, s as Profile]));
+    if (inc && inc.length > 0) {
+      const senderIds = Array.from(new Set(inc.map((r) => r.sender_id)));
+      const senderMap = await fetchProfiles(senderIds);
       setIncoming(
-        inReqs.map((r) => ({
+        inc.map((r) => ({
           ...r,
-          sender: sMap.get(r.sender_id) ?? null,
+          status: r.status as "pending" | "accepted" | "rejected",
+          sender: senderMap.get(r.sender_id) as Profile | undefined,
         }))
       );
     } else {
       setIncoming([]);
     }
 
-    // 3. 送信中の申請の取得
-    const { data: outReqs } = await supabase
+    // 送った申請
+    const { data: out } = await supabase
       .from("friend_requests")
-      .select("id, receiver_id, created_at")
+      .select("id, sender_id, receiver_id, status, created_at")
       .eq("sender_id", user.id)
       .eq("status", "pending")
       .order("created_at", { ascending: false });
 
-    if (outReqs && outReqs.length > 0) {
-      const recvIds = outReqs.map((r) => r.receiver_id);
-      const { data: receivers } = { data: await fetchProfiles(recvIds) };
-      const rMap = new Map((receivers ?? []).map((r) => [r.id, r as Profile]));
+    if (out && out.length > 0) {
+      const recIds = Array.from(new Set(out.map((r) => r.receiver_id)));
+      const recMap = await fetchProfiles(recIds);
       setOutgoing(
-        outReqs.map((r) => ({
+        out.map((r) => ({
           ...r,
-          receiver: rMap.get(r.receiver_id) ?? null,
+          status: r.status as "pending" | "accepted" | "rejected",
+          receiver: recMap.get(r.receiver_id) as Profile | undefined,
         }))
       );
     } else {
@@ -131,126 +138,78 @@ function FriendsPage() {
     void load();
   }, [user]);
 
-  const sendRequest = async () => {
-    if (!user) return;
-    const trimmed = code.trim();
-    if (!trimmed) {
-      toast.error("IDか名前を入力してください");
+  // 申請を送信
+  const handleSendReq = async () => {
+    const raw = code.trim();
+    if (!raw) {
+      toast.error("IDを入力してください");
       return;
     }
+    if (!user) return;
     setBusy(true);
-
     try {
-      const clean = trimmed.toUpperCase();
-      let target: Profile | null = null;
-
-      if (/^[A-Z0-9]{8}$/.test(clean)) {
-        const { data } = await supabase
-          .from("profiles")
-          .select("*")
-          .eq("friend_code", clean)
-          .maybeSingle();
-        target = data as Profile | null;
-      }
-
-      if (!target) {
-        const { data } = await supabase
-          .from("profiles")
-          .select("*")
-          .ilike("display_name", trimmed)
-          .limit(1);
-        target = (data?.[0] as Profile | null) ?? null;
-      }
-
-      if (!target) {
-        toast.error("ユーザーが見つかりませんでした");
-        return;
-      }
-
-      if (target.id === user.id) {
-        toast.error("自分自身には申請できません");
-        return;
-      }
-
-      if (friends.some((f) => f.id === target?.id)) {
-        toast.info("すでに友だちです");
-        return;
-      }
-
-      const { data: existing } = await supabase
-        .from("friend_requests")
-        .select("id, status")
-        .eq("sender_id", user.id)
-        .eq("receiver_id", target.id)
-        .eq("status", "pending")
-        .maybeSingle();
-
-      if (existing) {
-        toast.info("すでに申請を送信済みです（相手の承認をお待ちください）");
-        return;
-      }
-
-      const { error } = await supabase.from("friend_requests").insert({
-        sender_id: user.id,
-        receiver_id: target.id,
-        status: "pending",
+      // データベースのRPC関数で安全に申請
+      const { data, error } = await supabase.rpc("send_friend_request_by_code", {
+        _code: raw,
       });
 
       if (error) {
-        toast.error("申請の送信に失敗しました: " + error.message);
+        toast.error(error.message || "申請の送信に失敗しました");
         return;
       }
 
-      toast.success(`${target.display_name} さんに友だち申請を送りました！`);
+      toast.success("友だち申請を送信しました！");
       setCode("");
       setOpen(false);
       void load();
+    } catch (e: any) {
+      toast.error(e?.message || "エラーが発生しました");
     } finally {
       setBusy(false);
     }
   };
 
+  // 申請を承認
   const acceptReq = async (reqId: string) => {
     if (!user) return;
     setActionBusy(reqId);
     try {
-      const { data: req } = await supabase
-        .from("friend_requests")
-        .select("sender_id, receiver_id")
-        .eq("id", reqId)
-        .single();
+      const { error } = await supabase.rpc("accept_friend_request", {
+        _request_id: reqId,
+      });
 
-      if (!req) return;
-
-      const { error: insErr } = await supabase.from("friendships").insert([
-        { user_id: req.receiver_id, friend_id: req.sender_id },
-        { user_id: req.sender_id, friend_id: req.receiver_id },
-      ]);
-
-      if (insErr) {
-        toast.error("友だち追加に失敗しました: " + insErr.message);
+      if (error) {
+        toast.error("友だち追加に失敗しました: " + error.message);
         return;
       }
 
-      await supabase
-        .from("friend_requests")
-        .update({ status: "accepted" })
-        .eq("id", reqId);
-
       toast.success("友だち申請を承認しました！");
       void load();
+    } catch (e: any) {
+      toast.error(e?.message || "承認に失敗しました");
     } finally {
       setActionBusy(null);
     }
   };
 
+  // 申請を拒否
   const rejectReq = async (reqId: string) => {
     setActionBusy(reqId);
     try {
-      await supabase
-        .from("friend_requests")
-        .update({ status: "rejected" })
-        .eq("id", reqId);
+      const { error } = await supabase.rpc("reject_friend_request", {
+        _request_id: reqId,
+      });
+
+      if (error) {
+        // RPCがない場合は直接ステータス更新
+        await supabase
+          .from("friend_requests")
+          .update({ status: "rejected" })
+          .eq("id", reqId);
+      }
+      toast.info("申請を拒否しました");
+      void load();
+    } catch {
       toast.info("申請を拒否しました");
       void load();
     } finally {
@@ -258,10 +217,20 @@ function FriendsPage() {
     }
   };
 
+  // 申請を取り消し
   const cancelReq = async (reqId: string) => {
     setActionBusy(reqId);
     try {
-      await supabase.from("friend_requests").delete().eq("id", reqId);
+      const { error } = await supabase.rpc("cancel_friend_request", {
+        _request_id: reqId,
+      });
+
+      if (error) {
+        await supabase.from("friend_requests").delete().eq("id", reqId);
+      }
+      toast.info("申請を取り消しました");
+      void load();
+    } catch {
       toast.info("申請を取り消しました");
       void load();
     } finally {
@@ -280,252 +249,283 @@ function FriendsPage() {
     }
   };
 
-  return (
-    <AppShell
-      title="友だち"
-      action={
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button size="icon" variant="ghost" className="rounded-full" aria-label="友だち追加">
-              <UserPlus className="size-5" />
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>IDで友だちを検索して申請</DialogTitle>
-              <DialogDescription>
-                相手のID（8文字）か名前を入力してください。相手が承認すると友だちになります。
-              </DialogDescription>
-            </DialogHeader>
-            <div className="flex gap-2">
-              <Input
-                value={code}
-                onChange={(e) => setCode(e.target.value)}
-                placeholder="例: A3K9PQ2M / たろう"
-                maxLength={20}
-                className="font-mono tracking-widest"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void sendRequest();
-                }}
-              />
-              <Button variant="brand" onClick={sendRequest} disabled={busy}>
-                {busy ? "送信中" : "申請"}
-              </Button>
-            </div>
-            <p className="text-[11px] text-muted-foreground">
-              あなたのIDは <span className="font-mono font-bold text-foreground">{profile?.friend_code ?? "..."}</span> です。
-            </p>
-          </DialogContent>
-        </Dialog>
-      }
-    >
-      <div className="m-4 rounded-2xl bg-muted/60 p-4">
-        <p className="text-[11px] font-semibold text-muted-foreground">あなたのID（なりすまし不可）</p>
-        <div className="mt-1 flex items-center justify-between gap-3">
-          <p className="select-all font-mono text-xl font-black tracking-widest">
-            {profile?.friend_code ?? "········"}
-          </p>
-          <Button variant="outline" size="sm" className="rounded-full" onClick={shareMyId}>
-            <Share2 className="mr-1 size-4" />
-            IDを送る
-          </Button>
-        </div>
-      </div>
+  const filteredFriends = friends.filter((f) =>
+    (f.display_name || "").toLowerCase().includes(search.toLowerCase())
+  );
 
-      <Tabs defaultValue="friends" className="w-full">
-        <div className="px-4">
-          <TabsList className="grid w-full grid-cols-2 rounded-2xl">
-            <TabsTrigger value="friends" className="rounded-xl">
+  return (
+    <div className="mx-auto flex h-full min-h-screen w-full max-w-lg flex-col bg-background pb-20">
+      {/* ヘッダー */}
+      <header className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-background/95 px-4 py-3 backdrop-blur">
+        <h1 className="text-xl font-bold">友だち</h1>
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="icon" onClick={shareMyId} title="自分のIDを共有">
+            <Share2 className="size-5" />
+          </Button>
+
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+              <Button size="sm" className="gap-1 rounded-full bg-primary text-primary-foreground">
+                <UserPlus className="size-4" />
+                <span>追加</span>
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>友だちを追加</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4 pt-2">
+                <div className="rounded-lg border border-border bg-muted/40 p-3">
+                  <div className="text-xs text-muted-foreground">あなたのフレンドID</div>
+                  <div className="mt-1 flex items-center justify-between">
+                    <span className="font-mono text-base font-bold tracking-wider">
+                      {profile?.friend_code || "---"}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        if (profile?.friend_code) {
+                          navigator.clipboard.writeText(profile.friend_code);
+                          toast.success("コピーしました");
+                        }
+                      }}
+                    >
+                      <Copy className="size-3.5" />
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-medium text-muted-foreground">
+                    相手のフレンドIDまたはユーザー名を入力
+                  </label>
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="例: ABC123"
+                      value={code}
+                      onChange={(e) => setCode(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void handleSendReq();
+                      }}
+                      autoCapitalize="characters"
+                    />
+                    <Button onClick={handleSendReq} disabled={busy}>
+                      {busy ? "送信中..." : "申請"}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+        </div>
+      </header>
+
+      {/* タブ切り替え */}
+      <Tabs defaultValue="list" className="flex-1">
+        <div className="border-b border-border px-4">
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="list" className="relative">
               友だち ({friends.length})
             </TabsTrigger>
-            <TabsTrigger value="requests" className="relative rounded-xl">
-              届いた申請 ({incoming.length})
+            <TabsTrigger value="requests" className="relative">
+              申請
               {incoming.length > 0 && (
-                <span className="ml-1.5 flex size-2 rounded-full bg-destructive" />
+                <span className="ml-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground">
+                  {incoming.length}
+                </span>
               )}
             </TabsTrigger>
           </TabsList>
         </div>
 
-        {/* 友だち一覧タブ */}
-        <TabsContent value="friends" className="mt-2">
-          {/* Keepメモ（自分専用）カードを最上部にピン留め */}
-          <div className="px-4 pt-1 pb-2">
-            <Link
-              to="/keep"
-              className="flex items-center gap-3 rounded-2xl border border-border/80 bg-card p-3 shadow-sm hover:bg-muted/40 transition-colors"
-            >
-              <div className="flex size-11 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-                <Pin className="size-5" />
+        {/* 友だちリスト */}
+        <TabsContent value="list" className="m-0 p-4 space-y-3">
+          {/* Keepメモへの固定ピン留めカード */}
+          <Link
+            to="/keep"
+            className="flex items-center gap-3 rounded-xl border border-primary/20 bg-primary/5 p-3.5 transition-colors hover:bg-primary/10"
+          >
+            <div className="flex size-11 items-center justify-center rounded-full bg-primary/10 text-primary">
+              <FileText className="size-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5">
+                <span className="font-bold text-sm">Keepメモ</span>
+                <span className="inline-flex items-center gap-0.5 rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                  <Pin className="size-2.5" /> ピン留め
+                </span>
               </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5">
-                  <p className="font-semibold text-sm">Keepメモ</p>
-                  <span className="rounded-full bg-muted px-1.5 py-0.2 text-[10px] text-muted-foreground">自分専用</span>
-                </div>
-                <p className="truncate text-xs text-muted-foreground">
-                  下書き・リンク・ToDoを端末内に保存（通信量0）
-                </p>
-              </div>
-              <span className="text-xs text-primary font-medium">開く ›</span>
-            </Link>
-          </div>
+              <p className="truncate text-xs text-muted-foreground">
+                自分専用のメモ・下書き・URL保存（通信量ゼロ）
+              </p>
+            </div>
+          </Link>
+
+          {/* 検索バー */}
+          {friends.length > 3 && (
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="友だちを検索..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-9 h-9 text-sm"
+              />
+            </div>
+          )}
 
           {friends.length === 0 ? (
-            <div className="flex flex-col items-center gap-3 px-8 py-12 text-center">
-              <UserPlus className="size-12 text-muted-foreground/40" />
-              <p className="text-base font-bold">まだ友だちがいません</p>
-              <p className="text-sm text-muted-foreground">
-                相手のIDを聞いて「追加」から申請を送るか、
-                <br />
-                上の「IDを送る」であなたのIDを教えましょう。
-              </p>
-              <Button variant="brand" size="pill" onClick={() => setOpen(true)}>
-                IDで友だちを検索
-              </Button>
+            <div className="py-12 text-center text-sm text-muted-foreground">
+              友だちがまだいません。<br />右上の「追加」からIDで友だち申請を送ってみましょう！
             </div>
           ) : (
-            <ul className="divide-y divide-border">
-              {friends.map((f) => (
-                <li key={f.id} className="flex items-center gap-3 px-5 py-3">
+            <div className="space-y-1">
+              {filteredFriends.map((f) => (
+                <div
+                  key={f.id}
+                  className="flex items-center justify-between rounded-lg p-2.5 transition-colors hover:bg-muted/50"
+                >
                   <Link
                     to="/friend/$friendId"
                     params={{ friendId: f.id }}
                     className="flex min-w-0 flex-1 items-center gap-3"
                   >
-                    <Avatar className="size-12">
+                    <Avatar className="size-11">
                       <AvatarImage src={f.avatar_url ?? undefined} alt={f.display_name} />
-                      <AvatarFallback className="bg-brand-gradient text-primary-foreground">
+                      <AvatarFallback className="bg-brand-gradient text-xs text-primary-foreground">
                         {initials(f.display_name)}
                       </AvatarFallback>
                     </Avatar>
-                    <div className="min-w-0">
-                      <p className="truncate font-semibold">{f.display_name}<StaffBadge userId={f.id} /></p>
-                      <p className="truncate text-sm text-muted-foreground">
-                        {isBlocked(f.id) ? "ブロック中" : f.status_message || `ID: ${f.friend_code}`}
-                      </p>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-semibold">{f.display_name}</div>
+                      {f.status_message && (
+                        <div className="truncate text-xs text-muted-foreground">
+                          {f.status_message}
+                        </div>
+                      )}
                     </div>
                   </Link>
-                  <div className="flex shrink-0 items-center gap-1">
-                    <Button asChild variant="ghost" size="icon" aria-label="トーク">
-                      <Link to="/chat/$friendId" params={{ friendId: f.id }}>
-                        <MessageSquare className="size-5" />
-                      </Link>
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label="音声通話"
-                      disabled={isBlocked(f.id)}
-                      onClick={() => startCall(f, false)}
-                    >
-                      <Phone className="size-5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label="ビデオ通話"
-                      disabled={isBlocked(f.id)}
-                      onClick={() => startCall(f, true)}
-                    >
-                      <Video className="size-5" />
-                    </Button>
-                  </div>
-                </li>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => navigate({ to: "/chat/$friendId", params: { friendId: f.id } })}
+                    title="トークを開く"
+                  >
+                    <MessageCircle className="size-5 text-primary" />
+                  </Button>
+                </div>
               ))}
-            </ul>
+            </div>
           )}
         </TabsContent>
 
-        {/* 申請一覧タブ */}
-        <TabsContent value="requests" className="mt-2 space-y-6">
-          <div className="px-4">
-            <h3 className="mb-2 text-xs font-bold text-muted-foreground">届いたフレンド申請</h3>
+        {/* 申請リスト（届いた申請 / 送った申請） */}
+        <TabsContent value="requests" className="m-0 p-4 space-y-6">
+          {/* 届いた申請 */}
+          <div>
+            <h2 className="mb-2 text-xs font-bold uppercase text-muted-foreground">
+              届いた申請 ({incoming.length})
+            </h2>
             {incoming.length === 0 ? (
-              <p className="rounded-2xl border border-dashed py-8 text-center text-sm text-muted-foreground">
-                現在、届いている申請はありません
-              </p>
+              <p className="text-xs text-muted-foreground">新着の申請はありません</p>
             ) : (
-              <ul className="divide-y divide-border rounded-2xl border bg-card">
+              <div className="space-y-2">
                 {incoming.map((req) => (
-                  <li key={req.id} className="flex items-center gap-3 p-3">
-                    <Link
-                      to="/friend/$friendId"
-                      params={{ friendId: req.sender_id }}
-                      className="flex min-w-0 flex-1 items-center gap-2.5"
-                    >
+                  <div
+                    key={req.id}
+                    className="flex items-center justify-between rounded-lg border border-border p-3"
+                  >
+                    <div className="flex min-w-0 flex-1 items-center gap-3">
                       <Avatar className="size-10">
                         <AvatarImage src={req.sender?.avatar_url ?? undefined} />
-                        <AvatarFallback>{initials(req.sender?.display_name ?? "?")}</AvatarFallback>
+                        <AvatarFallback className="text-xs">
+                          {initials(req.sender?.display_name || "?")}
+                        </AvatarFallback>
                       </Avatar>
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold">
-                          {req.sender?.display_name ?? "ユーザー"}
-                        </p>
-                        <p className="font-mono text-[10px] text-muted-foreground">
-                          ID: {req.sender?.friend_code ?? "········"}
-                        </p>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-semibold">
+                          {req.sender?.display_name || "ユーザー"}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground">
+                          {new Date(req.created_at).toLocaleDateString()}
+                        </div>
                       </div>
-                    </Link>
-                    <div className="flex shrink-0 items-center gap-1.5">
+                    </div>
+                    <div className="flex items-center gap-1.5">
                       <Button
                         size="sm"
-                        variant="brand"
-                        className="h-8 rounded-full px-3 text-xs"
+                        variant="default"
                         disabled={actionBusy === req.id}
                         onClick={() => acceptReq(req.id)}
+                        className="h-8 gap-1 px-3 text-xs"
                       >
-                        <Check className="mr-1 size-3.5" />
+                        <Check className="size-3.5" />
                         承認
                       </Button>
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="h-8 rounded-full px-2.5 text-xs text-muted-foreground"
                         disabled={actionBusy === req.id}
                         onClick={() => rejectReq(req.id)}
+                        className="h-8 px-2 text-xs text-muted-foreground"
                       >
                         <X className="size-3.5" />
                       </Button>
                     </div>
-                  </li>
+                  </div>
                 ))}
-              </ul>
+              </div>
             )}
           </div>
 
-          {outgoing.length > 0 && (
-            <div className="px-4 pb-6">
-              <h3 className="mb-2 text-xs font-bold text-muted-foreground">あなたが送信した申請（承認待ち）</h3>
-              <ul className="divide-y divide-border rounded-2xl border bg-card">
+          {/* 送った申請 */}
+          <div>
+            <h2 className="mb-2 text-xs font-bold uppercase text-muted-foreground">
+              送信済みの申請 ({outgoing.length})
+            </h2>
+            {outgoing.length === 0 ? (
+              <p className="text-xs text-muted-foreground">送信中の申請はありません</p>
+            ) : (
+              <div className="space-y-2">
                 {outgoing.map((req) => (
-                  <li key={req.id} className="flex items-center justify-between p-3">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <Avatar className="size-8">
+                  <div
+                    key={req.id}
+                    className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/20 p-3"
+                  >
+                    <div className="flex min-w-0 flex-1 items-center gap-3">
+                      <Avatar className="size-9">
                         <AvatarImage src={req.receiver?.avatar_url ?? undefined} />
-                        <AvatarFallback>{initials(req.receiver?.display_name ?? "?")}</AvatarFallback>
+                        <AvatarFallback className="text-xs">
+                          {initials(req.receiver?.display_name || "?")}
+                        </AvatarFallback>
                       </Avatar>
-                      <div className="min-w-0">
-                        <p className="truncate text-xs font-medium">{req.receiver?.display_name ?? "ユーザー"}</p>
-                        <p className="font-mono text-[9px] text-muted-foreground">ID: {req.receiver?.friend_code}</p>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium">
+                          {req.receiver?.display_name || "ユーザー"}
+                        </div>
+                        <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                          <Clock className="size-3" />
+                          <span>承認待ち</span>
+                        </div>
                       </div>
                     </div>
                     <Button
                       size="sm"
                       variant="ghost"
-                      className="h-7 text-xs text-muted-foreground hover:text-destructive"
                       disabled={actionBusy === req.id}
                       onClick={() => cancelReq(req.id)}
+                      className="h-8 text-xs text-muted-foreground hover:text-destructive"
                     >
-                      取り消す
+                      取消
                     </Button>
-                  </li>
+                  </div>
                 ))}
-              </ul>
-            </div>
-          )}
+              </div>
+            )}
+          </div>
         </TabsContent>
       </Tabs>
-    </AppShell>
+    </div>
   );
 }
