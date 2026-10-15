@@ -3,28 +3,38 @@ export const CLOUDINARY_UPLOAD_PRESET = "rine_preset";
 
 /**
  * Cloudinaryに直接アップロード（署名不要のUnsigned Presetを使用）
- * Supabase Storageの通信量（Egress）とクレジット消費をゼロにします。
+ * 失敗時や未設定時は安全に null を返し、標準ストレージへフォールバックします。
  */
-export async function uploadToCloudinary(file: Blob | File): Promise<string> {
-  const formData = new FormData();
-  formData.append("file", file);
-  formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
-
-  const res = await fetch(
-    `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`,
-    {
-      method: "POST",
-      body: formData,
-    },
-  );
-
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "");
-    throw new Error(`Cloudinary upload failed: ${res.status} ${errText}`);
+export async function uploadToCloudinary(file: Blob | File): Promise<string | null> {
+  // 既知の無効アカウントまたは未設定時は無駄な通信を避けて即座にフォールバック
+  if (!CLOUDINARY_CLOUD_NAME || CLOUDINARY_CLOUD_NAME === "pfaqylud") {
+    return null;
   }
 
-  const json = (await res.json()) as { secure_url: string };
-  return json.secure_url;
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
+
+    const res = await fetch(
+      `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`,
+      {
+        method: "POST",
+        body: formData,
+      },
+    );
+
+    if (!res.ok) {
+      console.warn("Cloudinary upload failed, fallback to Supabase Storage:", res.status);
+      return null;
+    }
+
+    const json = (await res.json()) as { secure_url: string };
+    return json.secure_url || null;
+  } catch (err) {
+    console.warn("Cloudinary upload error, fallback to Supabase Storage:", err);
+    return null;
+  }
 }
 
 /**
