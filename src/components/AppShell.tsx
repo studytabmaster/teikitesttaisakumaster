@@ -154,16 +154,20 @@ export function AppShell({
       <main className="flex-1 pb-36">
         {children}
 
-        {/* スクロール下部の自然な広告枠（広告2：ff17effbd034eb2a76751472ab945fc0） */}
-        <div className="mt-8 mb-4 flex justify-center">
-          <AdBanner id="ff17effbd034eb2a76751472ab945fc0" />
-        </div>
+{pathname !== "/youtube" && (
+  <div className="mt-8 mb-4 flex justify-center">
+    <AdBanner id="ff17effbd034eb2a76751472ab945fc0" />
+  </div>
+)}
+
       </main>
 
-      {/* 下部メニュー直上の常時固定広告（広告1：a4204fd7c61d30fa3797c15aeff9ba54） */}
-      <div className="fixed bottom-[57px] left-1/2 z-20 w-full max-w-lg -translate-x-1/2 flex justify-center border-t border-border/40 bg-background/95 backdrop-blur py-1">
-        <AdBanner id="a4204fd7c61d30fa3797c15aeff9ba54" />
-      </div>
+{pathname !== "/youtube" && (
+  <div className="fixed bottom-[57px] left-1/2 z-20 w-full max-w-lg -translate-x-1/2 flex justify-center border-t border-border/40 bg-background/95 backdrop-blur py-1">
+    <AdBanner id="a4204fd7c61d30fa3797c15aeff9ba54" />
+  </div>
+)}
+
 
       <nav className="fixed bottom-0 left-1/2 z-20 w-full max-w-lg -translate-x-1/2 border-t border-border bg-background/95 backdrop-blur">
         <ul className="flex">
