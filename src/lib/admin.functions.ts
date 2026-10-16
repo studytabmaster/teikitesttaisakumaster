@@ -194,7 +194,7 @@ export const adminListGroups = createServerFn({ method: "POST" })
     }));
   });
 
-// ルームを丸ごと削除（投稿・メンバー・申請も一緒に消える）
+// ルームを丸ごと削除
 export const adminDeleteGroup = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { groupId: string }) => input)
@@ -211,7 +211,7 @@ export const adminDeleteGroup = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-// ルームを非公開に切り替える（削除せず一覧から隠す）
+// ルームを非公開に切り替える
 export const adminSetGroupOpen = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { groupId: string; isOpen: boolean }) => input)
@@ -244,300 +244,248 @@ export type AdminMessage = {
   created_at: string;
 };
 
-// 投稿を本文で検索（個人トーク＋グループ／オープンチャット）
+// 投稿を本文で検索
 export const adminSearchMessages = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { q?: string }) => input)
   .handler(async ({ data, context }): Promise<AdminMessage[]> => {
     await assertAdmin(context.supabase as never, context.userId);
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const q = (data.q ?? "").trim();
+    if (!q) return [];
 
-    let dmQuery = supabaseAdmin
-      .from("messages")
-      .select("id, sender_id, content, media_type, created_at")
-      .order("created_at", { ascending: false })
-      .limit(60);
-    let gmQuery = supabaseAdmin
-      .from("group_messages")
-      .select("id, sender_id, content, media_type, created_at, group_id")
-      .order("created_at", { ascending: false })
-      .limit(60);
-    if (q) {
-      dmQuery = dmQuery.ilike("content", `%${q}%`);
-      gmQuery = gmQuery.ilike("content", `%${q}%`);
-    }
-    const [dm, gm] = await Promise.all([dmQuery, gmQuery]);
-    const dmRows = dm.data ?? [];
-    const gmRows = gm.data ?? [];
-
-    const senderIds = [...new Set([...dmRows, ...gmRows].map((m) => m.sender_id))];
-    const groupIds = [...new Set(gmRows.map((m) => m.group_id))];
-    const [profs, grps] = await Promise.all([
-      senderIds.length
-        ? supabaseAdmin.from("profiles").select("id, display_name").in("id", senderIds)
-        : { data: [] },
-      groupIds.length
-        ? supabaseAdmin.from("groups").select("id, name").in("id", groupIds)
-        : { data: [] },
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const [{ data: dMsgs }, { data: gMsgs }] = await Promise.all([
+      supabaseAdmin
+        .from("messages")
+        .select("id, sender_id, content, media_type, created_at")
+        .ilike("content", `%${q}%`)
+        .order("created_at", { ascending: false })
+        .limit(40),
+      supabaseAdmin
+        .from("group_messages")
+        .select("id, sender_id, content, media_type, group_id, created_at")
+        .ilike("content", `%${q}%`)
+        .order("created_at", { ascending: false })
+        .limit(40),
     ]);
-    const nameOf = new Map((profs.data ?? []).map((p) => [p.id, p.display_name]));
-    const groupOf = new Map((grps.data ?? []).map((g) => [g.id, g.name]));
 
-    const all: AdminMessage[] = [
-      ...dmRows.map((m) => ({
-        id: m.id,
-        kind: "direct" as const,
-        sender_id: m.sender_id,
-        sender_name: nameOf.get(m.sender_id) ?? "不明",
-        content: m.content ?? "",
-        media_type: m.media_type,
-        group_name: null,
-        created_at: m.created_at,
-      })),
-      ...gmRows.map((m) => ({
-        id: m.id,
-        kind: "group" as const,
-        sender_id: m.sender_id,
-        sender_name: nameOf.get(m.sender_id) ?? "不明",
-        content: m.content ?? "",
-        media_type: m.media_type,
-        group_name: groupOf.get(m.group_id) ?? null,
-        created_at: m.created_at,
-      })),
-    ];
-    all.sort((a, b) => b.created_at.localeCompare(a.created_at));
-    return all.slice(0, 100);
+    const senderIds = Array.from(
+      new Set([...(dMsgs ?? []).map((m) => m.sender_id), ...(gMsgs ?? []).map((m) => m.sender_id)]),
+    );
+    const groupIds = Array.from(new Set((gMsgs ?? []).map((m) => m.group_id)));
+
+    const [{ data: senders }, { data: groups }] = await Promise.all([
+      senderIds.length > 0
+        ? supabaseAdmin.from("profiles").select("id, display_name").in("id", senderIds)
+        : Promise.resolve({ data: [] }),
+      groupIds.length > 0
+        ? supabaseAdmin.from("groups").select("id, name").in("id", groupIds)
+        : Promise.resolve({ data: [] }),
+    ]);
+
+    const senderMap = new Map((senders ?? []).map((s) => [s.id, s.display_name]));
+    const groupMap = new Map((groups ?? []).map((g) => [g.id, g.name]));
+
+    const direct: AdminMessage[] = (dMsgs ?? []).map((m) => ({
+      id: m.id,
+      kind: "direct",
+      sender_id: m.sender_id,
+      sender_name: senderMap.get(m.sender_id) ?? "不明",
+      content: m.content,
+      media_type: m.media_type,
+      group_name: null,
+      created_at: m.created_at,
+    }));
+
+    const group: AdminMessage[] = (gMsgs ?? []).map((m) => ({
+      id: m.id,
+      kind: "group",
+      sender_id: m.sender_id,
+      sender_name: senderMap.get(m.sender_id) ?? "不明",
+      content: m.content,
+      media_type: m.media_type,
+      group_name: groupMap.get(m.group_id) ?? "不明なルーム",
+      created_at: m.created_at,
+    }));
+
+    return [...direct, ...group].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+    );
   });
 
-// 投稿を1件だけ削除
+// 投稿を1件削除
 export const adminDeleteMessage = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { kind: "direct" | "group"; id: string }) => input)
   .handler(async ({ data, context }) => {
     await assertAdmin(context.supabase as never, context.userId);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const table = data.kind === "direct" ? "messages" : "group_messages";
-    const { error } = await supabaseAdmin.from(table).delete().eq("id", data.id);
-    if (error) throw new Error("投稿を削除できませんでした");
+    if (data.kind === "direct") {
+      await supabaseAdmin.from("messages").delete().eq("id", data.id);
+    } else {
+      await supabaseAdmin.from("group_messages").delete().eq("id", data.id);
+    }
     return { ok: true };
   });
 
-// 全オープンチャットへ公式アナウンスを一斉配信
-export const adminBroadcastToOpenGroups = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((input: { content: string }) => input)
-  .handler(async ({ data, context }) => {
-    await assertAdmin(context.supabase as never, context.userId);
-    const content = (data.content ?? "").trim();
-    if (!content) throw new Error("アナウンス内容を入力してください");
-
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { data: openGroups } = await supabaseAdmin
-      .from("groups")
-      .select("id")
-      .eq("is_open", true);
-
-    const groups = openGroups ?? [];
-    if (groups.length === 0) return { count: 0 };
-
-    const records = groups.map((g) => ({
-      group_id: g.id,
-      sender_id: context.userId,
-      content: `【📢 運営アナウンス】\n${content}`,
-    }));
-
-    await supabaseAdmin.from("group_messages").insert(records);
-    return { count: groups.length };
-  });
-
-// ダッシュボード用の集計
-export const adminStats = createServerFn({ method: "POST" })
+// 統計情報の取得
+export const adminStats = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     await assertAdmin(context.supabase as never, context.userId);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-    const [users, groups, openGroups, messages, todayMessages, openReports, bans] = await Promise.all([
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const [
+      { count: users },
+      { count: groups },
+      { count: openGroups },
+      { count: dMsgs },
+      { count: gMsgs },
+      { count: todayDMsgs },
+      { count: todayGMsgs },
+      { count: reports },
+      { count: bans },
+      { count: invites },
+    ] = await Promise.all([
       supabaseAdmin.from("profiles").select("id", { count: "exact", head: true }),
       supabaseAdmin.from("groups").select("id", { count: "exact", head: true }),
       supabaseAdmin.from("groups").select("id", { count: "exact", head: true }).eq("is_open", true),
       supabaseAdmin.from("messages").select("id", { count: "exact", head: true }),
-      supabaseAdmin.from("messages").select("id", { count: "exact", head: true }).gte("created_at", since),
+      supabaseAdmin.from("group_messages").select("id", { count: "exact", head: true }),
+      supabaseAdmin
+        .from("messages")
+        .select("id", { count: "exact", head: true })
+        .gte("created_at", todayStart.toISOString()),
+      supabaseAdmin
+        .from("group_messages")
+        .select("id", { count: "exact", head: true })
+        .gte("created_at", todayStart.toISOString()),
       supabaseAdmin.from("reports").select("id", { count: "exact", head: true }).eq("status", "open"),
       supabaseAdmin.from("user_bans").select("user_id", { count: "exact", head: true }),
+      supabaseAdmin.from("invitations").select("id", { count: "exact", head: true }),
     ]);
 
     return {
-      users: users.count ?? 0,
-      groups: groups.count ?? 0,
-      openGroups: openGroups.count ?? 0,
-      messages: messages.count ?? 0,
-      todayMessages: todayMessages.count ?? 0,
-      openReports: openReports.count ?? 0,
-      bans: bans.count ?? 0,
+      users: users ?? 0,
+      groups: groups ?? 0,
+      openGroups: openGroups ?? 0,
+      messages: (dMsgs ?? 0) + (gMsgs ?? 0),
+      todayMessages: (todayDMsgs ?? 0) + (todayGMsgs ?? 0),
+      openReports: reports ?? 0,
+      bans: bans ?? 0,
+      invites: invites ?? 0,
     };
   });
-// ==================== 運営アナウンス＆管理者投票 ====================
-const SYSTEM_ANNOUNCEMENT_GROUP_ID = "00000000-0000-0000-0000-000000000001";
 
-export type AnnouncementData = {
-  id: string;
-  content: string;
-  pollOptions?: string[] | undefined;
-  pollCounts?: number[] | undefined;
-  active: boolean;
-  createdAt: string;
-  hasVotedIndex?: number | null | undefined;
+// 招待リーダーボード（ランキングTOP100）
+export type InviteLeaderboardItem = {
+  user_id: string;
+  display_name: string;
+  friend_code: string;
+  avatar_url: string | null;
+  invite_count: number;
 };
 
-// 現在のアクティブなアナウンスを取得
-export const getActiveAnnouncement = createServerFn({ method: "GET" })
+export const adminGetInviteLeaderboard = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
-  .handler(async ({ context }): Promise<AnnouncementData | null> => {
+  .handler(async ({ context }): Promise<InviteLeaderboardItem[]> => {
+    await assertAdmin(context.supabase as never, context.userId);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { data: row } = await supabaseAdmin
-      .from("groups")
-      .select("description")
-      .eq("id", SYSTEM_ANNOUNCEMENT_GROUP_ID)
-      .maybeSingle();
 
-    if (!row || !row.description) return null;
-
-    try {
-      const parsed = JSON.parse(row.description) as AnnouncementData;
-      if (!parsed.active) return null;
-
-      if (parsed.pollOptions && parsed.pollOptions.length > 0) {
-        const { data: vote } = await supabaseAdmin
-          .from("group_join_requests")
-          .select("message")
-          .eq("group_id", SYSTEM_ANNOUNCEMENT_GROUP_ID)
-          .eq("user_id", context.userId)
-          .maybeSingle();
-
-        if (vote && vote.message !== null) {
-          parsed.hasVotedIndex = parseInt(vote.message, 10);
-        }
-      }
-
-      return parsed;
-    } catch {
-      return null;
-    }
+    const { data, error } = await supabaseAdmin.rpc("get_invite_leaderboard");
+    if (error || !data) return [];
+    return data as InviteLeaderboardItem[];
   });
 
-// アナウンスを発行（管理者のみ）
+// 不正招待の削除
+export const adminRevokeInvitation = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { invitedId: string }) => input)
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context.supabase as never, context.userId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    await supabaseAdmin.from("invitations").delete().eq("invited_id", data.invitedId);
+    return { ok: true };
+  });
+
+// 全ユーザー向けアナウンスの公開
 export const adminPublishAnnouncement = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { content: string; pollOptions?: string[] }) => input)
   .handler(async ({ data, context }) => {
     await assertAdmin(context.supabase as never, context.userId);
     const content = (data.content ?? "").trim();
-    if (!content) throw new Error("アナウンス内容を入力してください");
+    if (!content) throw new Error("アナウンス本文を入力してください");
 
-    const pollOptions = (data.pollOptions ?? [])
-      .map((o) => o.trim())
-      .filter((o) => o.length > 0);
-
-    const announcement: AnnouncementData = {
-      id: Date.now().toString(),
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const payload = {
       content,
-      pollOptions: pollOptions.length >= 2 ? pollOptions : undefined,
-      pollCounts: pollOptions.length >= 2 ? new Array(pollOptions.length).fill(0) : undefined,
-      active: true,
-      createdAt: new Date().toISOString(),
+      pollOptions: data.pollOptions && data.pollOptions.length >= 2 ? data.pollOptions : null,
+      publishedAt: new Date().toISOString(),
+      publishedBy: context.userId,
     };
 
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    await supabaseAdmin.from("groups").upsert({
-      id: SYSTEM_ANNOUNCEMENT_GROUP_ID,
-      name: "📢 運営アナウンス",
-      description: JSON.stringify(announcement),
-      is_open: false,
-      owner_id: context.userId,
+    await supabaseAdmin.from("app_state").upsert({
+      key: "active_announcement",
+      last_run_at: new Date().toISOString(),
     });
 
-    // 以前の投票履歴をリセット
-    await supabaseAdmin
-      .from("group_join_requests")
-      .delete()
-      .eq("group_id", SYSTEM_ANNOUNCEMENT_GROUP_ID);
-
-    return { ok: true, announcement };
-  });
-
-// 投票を実行（一般ユーザー）
-export const voteAnnouncement = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((input: { optionIndex: number }) => input)
-  .handler(async ({ data, context }) => {
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { data: row } = await supabaseAdmin
-      .from("groups")
-      .select("description")
-      .eq("id", SYSTEM_ANNOUNCEMENT_GROUP_ID)
-      .maybeSingle();
-
-    if (!row || !row.description) throw new Error("アナウンスが見つかりません");
-    const parsed = JSON.parse(row.description) as AnnouncementData;
-    if (!parsed.active || !parsed.pollOptions || !parsed.pollCounts) {
-      throw new Error("投票は終了しました");
-    }
-
-    const idx = data.optionIndex;
-    if (idx < 0 || idx >= parsed.pollOptions.length) {
-      throw new Error("無効な選択肢です");
-    }
-
-    const { data: existing } = await supabaseAdmin
-      .from("group_join_requests")
-      .select("id")
-      .eq("group_id", SYSTEM_ANNOUNCEMENT_GROUP_ID)
-      .eq("user_id", context.userId)
-      .maybeSingle();
-
-    if (existing) throw new Error("すでに投票済みです");
-
-    await supabaseAdmin.from("group_join_requests").insert({
-      group_id: SYSTEM_ANNOUNCEMENT_GROUP_ID,
-      user_id: context.userId,
-      message: idx.toString(),
-      status: "approved",
+    const channel = supabaseAdmin.channel("system-announcements");
+    await channel.send({
+      type: "broadcast",
+      event: "new_announcement",
+      payload,
     });
 
-    parsed.pollCounts[idx] = (parsed.pollCounts[idx] || 0) + 1;
-
-    await supabaseAdmin
-      .from("groups")
-      .update({ description: JSON.stringify(parsed) })
-      .eq("id", SYSTEM_ANNOUNCEMENT_GROUP_ID);
-
-    return { ok: true, pollCounts: parsed.pollCounts, hasVotedIndex: idx };
+    return { ok: true };
   });
 
-// アナウンスを終了（管理者のみ）
+// アナウンスの終了
 export const adminCloseAnnouncement = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     await assertAdmin(context.supabase as never, context.userId);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    await supabaseAdmin.from("app_state").delete().eq("key", "active_announcement");
 
-    const { data: row } = await supabaseAdmin
-      .from("groups")
-      .select("description")
-      .eq("id", SYSTEM_ANNOUNCEMENT_GROUP_ID)
-      .maybeSingle();
-
-    if (row && row.description) {
-      const parsed = JSON.parse(row.description) as AnnouncementData;
-      parsed.active = false;
-      await supabaseAdmin
-        .from("groups")
-        .update({ description: JSON.stringify(parsed) })
-        .eq("id", SYSTEM_ANNOUNCEMENT_GROUP_ID);
-    }
+    const channel = supabaseAdmin.channel("system-announcements");
+    await channel.send({
+      type: "broadcast",
+      event: "close_announcement",
+      payload: {},
+    });
 
     return { ok: true };
+  });
+
+export const getActiveAnnouncement = createServerFn({ method: "GET" }).handler(async () => {
+  return null;
+});
+
+// オープンチャットへの一斉アナウンス送信
+export const adminBroadcastToOpenGroups = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { message: string }) => input)
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context.supabase as never, context.userId);
+    const text = (data.message ?? "").trim();
+    if (!text) throw new Error("本文を入力してください");
+
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: groups } = await supabaseAdmin.from("groups").select("id").eq("is_open", true);
+    const openGroups = groups ?? [];
+    if (openGroups.length === 0) return { count: 0 };
+
+    const rows = openGroups.map((g) => ({
+      group_id: g.id,
+      sender_id: context.userId,
+      content: `📢【運営アナウンス】\n${text}`,
+      media_type: "text",
+    }));
+
+    await supabaseAdmin.from("group_messages").insert(rows);
+    return { count: rows.length };
   });
