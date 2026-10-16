@@ -338,6 +338,42 @@ export type Database = {
         }
         Relationships: []
       }
+      invitations: {
+        Row: {
+          created_at: string
+          id: string
+          invited_id: string
+          inviter_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          invited_id: string
+          inviter_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          invited_id?: string
+          inviter_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "invitations_invited_id_fkey"
+            columns: ["invited_id"]
+            isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invitations_inviter_id_fkey"
+            columns: ["inviter_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       messages: {
         Row: {
           content: string
@@ -624,6 +660,16 @@ export type Database = {
       confirm_adult: { Args: { _birth_date: string }; Returns: boolean }
       generate_friend_code: { Args: never; Returns: string }
       get_client_ip: { Args: never; Returns: string }
+      get_invite_leaderboard: {
+        Args: never
+        Returns: {
+          avatar_url: string
+          display_name: string
+          friend_code: string
+          invite_count: number
+          user_id: string
+        }[]
+      }
       get_staff_ids: {
         Args: never
         Returns: {
@@ -659,6 +705,7 @@ export type Database = {
           member_count: number
         }[]
       }
+      record_invitation: { Args: { _invite_code: string }; Returns: boolean }
       reject_friend_request: { Args: { _request_id: string }; Returns: boolean }
       send_friend_request_by_code: {
         Args: { _code: string }
