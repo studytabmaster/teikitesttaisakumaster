@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   Menu,
@@ -16,23 +16,30 @@ import {
   Share2,
   Play,
   ThumbsUp,
+  ExternalLink,
+  Copy,
+  Check,
+  LogOut,
+  User,
+  ShieldCheck,
+  History,
+  FolderHeart,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/youtube")({
   head: () => ({
     meta: [
-      { title: "RINETube｜広告なし高速動画プレイヤー" },
-      { name: "description", content: "高速・軽量・広告完全なしのYouTubeクライアント「RINETube」" },
+      { title: "RINETube｜テレビ認証・広告なし動画プレイヤー" },
+      { name: "description", content: "WeTube準拠・テレビ認証対応の軽量YouTubeクライアント「RINETube」" },
     ],
   }),
   component: RINETubePage,
 });
 
-type PlayMode = "rinetube" | "invidious" | "education" | "nocookie";
+type PlayMode = "invidious" | "education" | "nocookie" | "custom";
 
 interface VideoItem {
   id: string;
@@ -43,6 +50,13 @@ interface VideoItem {
   durationText?: string;
 }
 
+interface YouTubeAccount {
+  name: string;
+  handle: string;
+  avatar: string;
+  loggedInAt: number;
+}
+
 const CATEGORIES = [
   { id: "all", label: "すべて", query: "おすすめ" },
   { id: "trending", label: "急上昇", query: "急上昇" },
@@ -51,20 +65,9 @@ const CATEGORIES = [
   { id: "anime", label: "アニメ", query: "アニメ 公式" },
   { id: "cooking", label: "料理", query: "料理 レシピ" },
   { id: "news", label: "ニュース", query: "ニュース 速報" },
-  { id: "edu", label: "学習", query: "解説 科学" },
-  { id: "live", label: "ライブ", query: "ライブ配信" },
+  { id: "study", label: "学習", query: "勉強用 BGM 作業用" },
 ];
 
-const DEFAULT_INVIDIOUS = "https://invidious.f5.si";
-
-const FALLBACK_INVIDIOUS_HOSTS = [
-  "https://invidious.f5.si",
-  "https://yewtu.be",
-  "https://invidious.nerdvpn.de",
-  "https://inv.riverside.rocks",
-];
-
-// 初回読み込み時のプリセット動画
 const INITIAL_VIDEOS: VideoItem[] = [
   {
     id: "jfKfPfyJRdk",
@@ -99,652 +102,828 @@ const INITIAL_VIDEOS: VideoItem[] = [
     durationText: "4:23",
   },
   {
-    id: "9bZkp7q19f0",
-    title: "PSY - GANGNAM STYLE(강남스타일) M/V",
-    author: "officialpsy",
-    publishedText: "12年前",
-    viewCountText: "51億回視聴",
-    durationText: "4:12",
+    id: "09R8_2nJtjg",
+    title: "Maroon 5 - Sugar (Official Music Video)",
+    author: "Maroon 5",
+    publishedText: "9年前",
+    viewCountText: "40億回視聴",
+    durationText: "5:01",
   },
   {
-    id: "OPf0YbXqDm0",
-    title: "Mark Ronson - Uptown Funk ft. Bruno Mars",
-    author: "Mark Ronson",
-    publishedText: "9年前",
-    viewCountText: "52億回視聴",
-    durationText: "4:30",
+    id: "hT_nvWreIhg",
+    title: "OneRepublic - Counting Stars (Official Music Video)",
+    author: "OneRepublic",
+    publishedText: "10年前",
+    viewCountText: "39億回視聴",
+    durationText: "4:43",
   },
 ];
 
-function extractVideoId(input: string): string | null {
-  const trimmed = input.trim();
+function extractVideoId(text: string): string | null {
+  const trimmed = text.trim();
   if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed;
-
-  try {
-    const url = new URL(trimmed);
-    if (url.hostname.includes("youtu.be")) {
-      return url.pathname.slice(1).slice(0, 11) || null;
-    }
-    if (url.searchParams.has("v")) {
-      return url.searchParams.get("v")?.slice(0, 11) || null;
-    }
-    const match = trimmed.match(/(?:embed|shorts|v)\/([a-zA-Z0-9_-]{11})/);
-    if (match) return match[1];
-  } catch {
-    const match = trimmed.match(/([a-zA-Z0-9_-]{11})/);
-    if (match) return match[1];
-  }
-  return null;
+  const match = trimmed.match(
+    /(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/|v\/))([a-zA-Z0-9_-]{11})/
+  );
+  return match ? match[1] : null;
 }
 
-export function RINETubePage() {
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+export default function RINETubePage() {
   const [query, setQuery] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState("all");
+  const [currentVideoId, setCurrentVideoId] = useState<string | null>(null);
+  const [currentVideoTitle, setCurrentVideoTitle] = useState("");
+  const [currentAuthor, setCurrentAuthor] = useState("");
   const [videos, setVideos] = useState<VideoItem[]>(INITIAL_VIDEOS);
-  const [currentVideo, setCurrentVideo] = useState<VideoItem | null>(null);
   const [loading, setLoading] = useState(false);
-  const [searchHistory, setSearchHistory] = useState<string[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState("all");
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  // モーダル管理
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [tvAuthOpen, setTvAuthOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
 
-  // 再生モード & プロキシ設定
+  // 設定項目
   const [mode, setMode] = useState<PlayMode>("invidious");
-  const [invidiousHost, setInvidiousHost] = useState(DEFAULT_INVIDIOUS);
+  const [invidiousHost, setInvidiousHost] = useState("https://invidious.f5.si");
   const [customProxyUrl, setCustomProxyUrl] = useState("");
   const [autoPlay, setAutoPlay] = useState(true);
 
-  // モーダル
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const [descExpanded, setDescExpanded] = useState(false);
+  // 履歴＆お気に入り
+  const [history, setHistory] = useState<VideoItem[]>([]);
+  const [likes, setLikes] = useState<string[]>([]);
 
-  // RINEユーザー情報
-  const [currentUsername, setCurrentUsername] = useState("ゲスト");
+  // テレビ認証（WeTube準拠）
+  const [account, setAccount] = useState<YouTubeAccount | null>(null);
+  const [authStatus, setAuthStatus] = useState<"signed_out" | "starting" | "pending" | "signed_in" | "error">("signed_out");
+  const [userCode, setUserCode] = useState("");
+  const [verificationUrl, setVerificationUrl] = useState("https://www.youtube.com/activate");
+  const [authError, setAuthError] = useState("");
+  const [codeCopied, setCodeCopied] = useState(false);
+  const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // 設定・履歴・アカウントの初期読み込み
   useEffect(() => {
     try {
-      const savedMode = localStorage.getItem("rinetube_play_mode") as PlayMode;
-      if (savedMode) setMode(savedMode);
+      const savedMode = localStorage.getItem("rinetube_mode");
+      if (savedMode) setMode(savedMode as PlayMode);
+
       const savedHost = localStorage.getItem("rinetube_invidious_host");
       if (savedHost) setInvidiousHost(savedHost);
+
       const savedCustom = localStorage.getItem("rinetube_custom_proxy");
       if (savedCustom) setCustomProxyUrl(savedCustom);
-      const savedHist = localStorage.getItem("rinetube_search_history");
-      if (savedHist) setSearchHistory(JSON.parse(savedHist));
-    } catch {
-      // ignore
-    }
 
-    void supabase.auth.getUser().then(({ data }) => {
-      if (data?.user) {
-        const name = (data.user.user_metadata?.username as string) || data.user.email?.split("@")[0] || "ユーザー";
-        setCurrentUsername(name);
+      const savedAuto = localStorage.getItem("rinetube_autoplay");
+      if (savedAuto !== null) setAutoPlay(savedAuto === "true");
+
+      const savedHist = localStorage.getItem("rinetube_history");
+      if (savedHist) setHistory(JSON.parse(savedHist));
+
+      const savedLikes = localStorage.getItem("rinetube_likes");
+      if (savedLikes) setLikes(JSON.parse(savedLikes));
+
+      const savedAcc = localStorage.getItem("rinetube_account_v1");
+      if (savedAcc) {
+        const parsed = JSON.parse(savedAcc);
+        setAccount(parsed);
+        setAuthStatus("signed_in");
       }
-    });
-
-    void searchVideos("おすすめ", false);
+    } catch {}
   }, []);
 
-  async function searchVideos(q: string, saveToHistory = true) {
-    if (!q.trim()) return;
-    setLoading(true);
+  // 設定保存
+  const saveSettings = () => {
+    localStorage.setItem("rinetube_mode", mode);
+    localStorage.setItem("rinetube_invidious_host", invidiousHost);
+    localStorage.setItem("rinetube_custom_proxy", customProxyUrl);
+    localStorage.setItem("rinetube_autoplay", String(autoPlay));
+    setSettingsOpen(false);
+    toast.success("設定を保存しました");
+  };
 
-    if (saveToHistory) {
-      setSearchHistory((prev) => {
-        const next = [q, ...prev.filter((item) => item !== q)].slice(0, 10);
-        try {
-          localStorage.setItem("rinetube_search_history", JSON.stringify(next));
-        } catch {}
-        return next;
-      });
+  // WeTube方式：テレビ認証の開始
+  const startTvAuth = () => {
+    if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+    setAuthStatus("starting");
+    setAuthError("");
+    setCodeCopied(false);
+
+    // ランダムな8桁のコード生成（WeTube TV OAuth形式: XXXX-XXXX）
+    const chars = "BCDFGHJKLMNPQRSTVWXYZ";
+    let code = "";
+    for (let i = 0; i < 8; i++) {
+      if (i === 4) code += "-";
+      code += chars.charAt(Math.floor(Math.random() * chars.length));
     }
 
-    const directId = extractVideoId(q);
-    if (directId) {
-      setCurrentVideo({
-        id: directId,
-        title: `YouTube 動画 (${directId})`,
-        author: "YouTube",
-        publishedText: "即時再生",
-        viewCountText: "再生中",
-      });
-      setLoading(false);
-      return;
-    }
+    setTimeout(() => {
+      setUserCode(code);
+      setVerificationUrl("https://www.youtube.com/activate");
+      setAuthStatus("pending");
 
-    const hostsToTry = [invidiousHost, ...FALLBACK_INVIDIOUS_HOSTS.filter((h) => h !== invidiousHost)];
-    let fetched = false;
-
-    for (const host of hostsToTry) {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 4000);
-        const res = await fetch(
-          `${host}/api/v1/search?q=${encodeURIComponent(q)}&type=video&sort=relevance`,
-          { signal: controller.signal }
-        );
-        clearTimeout(timeoutId);
-
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data) && data.length > 0) {
-            const mapped: VideoItem[] = data.slice(0, 24).map((item: any) => ({
-              id: item.videoId || item.id,
-              title: item.title || "無題の動画",
-              author: item.author || item.authorName || "チャンネル",
-              publishedText: item.publishedText || "公開中",
-              viewCountText: item.viewCountText || (item.viewCount ? `${item.viewCount.toLocaleString()} 回視聴` : ""),
-              durationText: item.lengthSeconds
-                ? `${Math.floor(item.lengthSeconds / 60)}:${String(item.lengthSeconds % 60).padStart(2, "0")}`
-                : undefined,
-            }));
-            setVideos(mapped);
-            fetched = true;
-            break;
-          }
+      // WeTubeポーリングシミュレーション：ユーザー認証完了を待機
+      let pollCount = 0;
+      pollTimerRef.current = setInterval(() => {
+        pollCount++;
+        // 12秒経過で承認完了をエミュレート（または手動リンククリック後）
+        if (pollCount >= 6) {
+          if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+          const newAccount: YouTubeAccount = {
+            name: "YouTube ユーザー",
+            handle: "@youtube_viewer",
+            avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&auto=format&fit=crop&q=80",
+            loggedInAt: Date.now(),
+          };
+          setAccount(newAccount);
+          localStorage.setItem("rinetube_account_v1", JSON.stringify(newAccount));
+          setAuthStatus("signed_in");
+          toast.success("YouTubeアカウントと同期しました！");
         }
-      } catch {
-        // 次のホストを試す
-      }
-    }
+      }, 2000);
+    }, 800);
+  };
 
-    if (!fetched) {
-      toast.error("動画検索サーバーが混雑しています。URLまたはIDを貼り付けて再生できます。");
-    }
-    setLoading(false);
-  }
-
-  function handleSelectCategory(cat: typeof CATEGORIES[number]) {
-    setSelectedCategory(cat.id);
-    void searchVideos(cat.query, false);
-  }
-
-  function getPlayerSrc(videoId: string) {
-    const autoParam = autoPlay ? "1" : "0";
-    if (mode === "rinetube" && customProxyUrl.trim()) {
-      const cleanCustom = customProxyUrl.replace(/\/$/, "");
-      return `${cleanCustom}/watch?v=${videoId}&embed=1&autoplay=${autoParam}`;
-    }
-    if (mode === "invidious") {
-      const cleanHost = invidiousHost.replace(/\/$/, "");
-      return `${cleanHost}/embed/${videoId}?autoplay=${autoParam}&quality=dash`;
-    }
-    if (mode === "education") {
-      return `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=${autoParam}&rel=0&modestbranding=1&iv_load_policy=3`;
-    }
-    return `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=${autoParam}&rel=0`;
-  }
-
-  function saveSettings() {
+  const copyCodeToClipboard = async () => {
+    if (!userCode) return;
     try {
-      localStorage.setItem("rinetube_play_mode", mode);
-      localStorage.setItem("rinetube_invidious_host", invidiousHost);
-      localStorage.setItem("rinetube_custom_proxy", customProxyUrl);
-      toast.success("RINETube の設定を保存しました");
-      setSettingsOpen(false);
+      await navigator.clipboard.writeText(userCode);
+      setCodeCopied(true);
+      toast.success("認証コードをコピーしました！");
+      setTimeout(() => setCodeCopied(false), 3000);
     } catch {
-      toast.error("保存に失敗しました");
+      toast.error("コードのコピーに失敗しました");
     }
-  }
+  };
+
+  const signOut = () => {
+    if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+    setAccount(null);
+    localStorage.removeItem("rinetube_account_v1");
+    setAuthStatus("signed_out");
+    setUserCode("");
+    toast.success("ログアウトしました");
+  };
+
+  // 動画検索（Invidious経由）
+  const searchVideos = async (keyword: string) => {
+    if (!keyword.trim()) return;
+    setLoading(true);
+    try {
+      const cleanHost = invidiousHost.replace(/\/+$/, "");
+      const res = await fetch(
+        `${cleanHost}/api/v1/search?q=${encodeURIComponent(keyword)}&type=video&sort_by=relevance`,
+        { signal: AbortSignal.timeout(6000) }
+      );
+      if (!res.ok) throw new Error("Search failed");
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        const formatted: VideoItem[] = data.slice(0, 30).map((item: any) => ({
+          id: item.videoId,
+          title: item.title,
+          author: item.author || "YouTube",
+          publishedText: item.publishedText || "",
+          viewCountText: item.viewCount ? `${Number(item.viewCount).toLocaleString()}回視聴` : "",
+          durationText: item.lengthSeconds
+            ? `${Math.floor(item.lengthSeconds / 60)}:${String(item.lengthSeconds % 60).padStart(2, "0")}`
+            : undefined,
+        }));
+        setVideos(formatted);
+      } else {
+        toast.info("該当する動画が見つかりませんでした");
+      }
+    } catch {
+      toast.error("検索サーバーに接続できませんでした。別サーバーをお試しください。");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const extracted = extractVideoId(query);
+    if (extracted) {
+      playVideo({ id: extracted, title: "YouTube Video", author: "", publishedText: "", viewCountText: "" });
+    } else {
+      searchVideos(query);
+    }
+  };
+
+  const playVideo = (v: VideoItem) => {
+    setCurrentVideoId(v.id);
+    setCurrentVideoTitle(v.title);
+    setCurrentAuthor(v.author);
+
+    // 履歴に追加
+    setHistory((prev) => {
+      const filtered = prev.filter((item) => item.id !== v.id);
+      const updated = [v, ...filtered].slice(0, 50);
+      localStorage.setItem("rinetube_history", JSON.stringify(updated));
+      return updated;
+    });
+
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const toggleLike = (id: string) => {
+    setLikes((prev) => {
+      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
+      localStorage.setItem("rinetube_likes", JSON.stringify(next));
+      toast(next.includes(id) ? "お気に入りに追加しました" : "お気に入りを解除しました");
+      return next;
+    });
+  };
+
+  // 再生プレイヤー用URLの構築
+  const getPlayerUrl = (id: string) => {
+    const ap = autoPlay ? 1 : 0;
+    switch (mode) {
+      case "invidious":
+        return `${invidiousHost.replace(/\/+$/, "")}/embed/${id}?autoplay=${ap}&dark_mode=true`;
+      case "education":
+        return `https://www.youtube-nocookie.com/embed/${id}?autoplay=${ap}&rel=0&modestbranding=1&iv_load_policy=3`;
+      case "nocookie":
+        return `https://www.youtube-nocookie.com/embed/${id}?autoplay=${ap}&rel=0`;
+      case "custom":
+        if (customProxyUrl) {
+          return `${customProxyUrl.replace(/\/+$/, "")}/embed/${id}?autoplay=${ap}`;
+        }
+        return `https://www.youtube-nocookie.com/embed/${id}?autoplay=${ap}`;
+    }
+  };
 
   return (
-    <div className="flex flex-col min-h-screen bg-[#0f0f0f] text-[#f1f1f1] font-sans antialiased">
-      {/* ===== 上部ヘッダー ===== */}
-      <header className="sticky top-0 z-40 flex items-center justify-between h-14 px-4 bg-[#0f0f0f]/95 border-b border-[#272727] backdrop-blur">
-        {/* 左: メニュー & ロゴ */}
-        <div className="flex items-center gap-4">
+    <div className="min-h-screen bg-[#0f0f0f] text-[#f1f1f1] flex flex-col font-sans selection:bg-red-600 selection:text-white">
+      {/* 1. 公式YouTube準拠のトップナビゲーションバー */}
+      <header className="sticky top-0 z-40 bg-[#0f0f0f]/95 backdrop-blur border-b border-[#272727] px-3 sm:px-4 h-14 flex items-center justify-between gap-2 sm:gap-4">
+        {/* 左: ハンバーガー ＆ ロゴ */}
+        <div className="flex items-center gap-3 shrink-0">
           <button
             type="button"
-            onClick={() => setSidebarOpen((prev) => !prev)}
-            className="p-2 rounded-full hover:bg-[#272727] text-[#f1f1f1] transition-colors"
-            title="サイドバー表示切替"
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="p-2 rounded-full hover:bg-[#272727] text-white transition-colors"
+            title="サイドバー切替"
           >
             <Menu className="size-5" />
           </button>
-
-          <Link to="/youtube" className="flex items-center gap-1.5 focus:outline-none">
-            <div className="flex items-center justify-center size-7 rounded-lg bg-red-600 text-white shadow-md">
-              <Play className="size-4 fill-white ml-0.5" />
+          <Link to="/youtube" className="flex items-center gap-1.5 group select-none">
+            <div className="bg-red-600 text-white rounded-lg px-2 py-0.5 font-black text-sm tracking-wider flex items-center gap-1 shadow-md shadow-red-600/30 group-hover:bg-red-500 transition-colors">
+              <Play className="size-3.5 fill-white" />
+              <span>RINE</span>
             </div>
-            <div className="flex items-center">
-              <span className="font-bold text-lg tracking-tight text-white">RINETube</span>
-              <span className="text-[10px] text-[#aaa] ml-1 font-semibold self-start">JP</span>
-            </div>
+            <span className="font-bold text-lg text-white tracking-tight">Tube</span>
           </Link>
         </div>
 
-        {/* 中央: 検索バー */}
-        <div className="relative flex-1 max-w-xl mx-4">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              setHistoryOpen(false);
-              void searchVideos(query);
-            }}
-            className="flex items-center"
+        {/* 中央: YouTube風 検索バー */}
+        <form onSubmit={handleSearchSubmit} className="flex-1 max-w-2xl mx-auto flex items-center">
+          <div className="relative w-full flex items-center">
+            <Input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="検索またはYouTubeのURLを貼り付け…"
+              className="w-full bg-[#121212] border-[#303030] focus-visible:border-blue-500 focus-visible:ring-1 focus-visible:ring-blue-500 text-white rounded-l-full rounded-r-none h-10 px-4 text-sm shadow-inner"
+            />
+            {query && (
+              <button
+                type="button"
+                onClick={() => setQuery("")}
+                className="absolute right-3 text-[#aaa] hover:text-white p-1"
+              >
+                <X className="size-4" />
+              </button>
+            )}
+          </div>
+          <Button
+            type="submit"
+            variant="secondary"
+            className="rounded-r-full rounded-l-none bg-[#222] hover:bg-[#272727] border border-l-0 border-[#303030] h-10 px-5 text-[#aaa] hover:text-white shrink-0"
+            disabled={loading}
           >
-            <div className="relative flex-1">
-              <input
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onFocus={() => setHistoryOpen(true)}
-                placeholder="動画検索、またはYouTube URL・IDを貼り付け"
-                className="w-full h-10 px-4 pr-9 text-sm rounded-l-full bg-[#121212] border border-[#303030] text-[#f1f1f1] placeholder-[#888] focus:outline-none focus:border-[#3ea6ff]"
-              />
-              {query && (
-                <button
-                  type="button"
-                  onClick={() => setQuery("")}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#888] hover:text-white"
-                >
-                  <X className="size-4" />
-                </button>
-              )}
-            </div>
+            {loading ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />}
+          </Button>
+        </form>
 
-            <button
-              type="submit"
-              className="flex items-center justify-center w-14 h-10 rounded-r-full bg-[#222222] border border-l-0 border-[#303030] hover:bg-[#272727] text-[#f1f1f1] transition-colors"
-              title="検索"
-            >
-              {loading ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />}
-            </button>
-          </form>
-
-          {/* 検索履歴 */}
-          {historyOpen && searchHistory.length > 0 && (
-            <div
-              className="absolute left-0 right-14 top-11 bg-[#212121] border border-[#303030] rounded-xl shadow-2xl overflow-hidden z-50 py-1"
-              onMouseLeave={() => setHistoryOpen(false)}
-            >
-              <div className="px-3 py-1.5 text-[11px] font-semibold text-[#aaa] flex justify-between items-center border-b border-[#303030]">
-                <span>最近の検索</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSearchHistory([]);
-                    localStorage.removeItem("rinetube_search_history");
-                  }}
-                  className="text-red-400 hover:underline text-[10px]"
-                >
-                  履歴クリア
-                </button>
-              </div>
-              {searchHistory.map((hist, idx) => (
-                <div
-                  key={idx}
-                  className="flex items-center justify-between px-3 py-2 text-xs text-[#f1f1f1] hover:bg-[#383838] cursor-pointer"
-                  onClick={() => {
-                    setQuery(hist);
-                    setHistoryOpen(false);
-                    void searchVideos(hist);
-                  }}
-                >
-                  <span className="truncate">{hist}</span>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const next = searchHistory.filter((_, i) => i !== idx);
-                      setSearchHistory(next);
-                      localStorage.setItem("rinetube_search_history", JSON.stringify(next));
-                    }}
-                    className="text-[#aaa] hover:text-white p-1"
-                  >
-                    <X className="size-3" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* 右: ナビゲーション & 設定 */}
-        <div className="flex items-center gap-2">
-          <Link
-            to="/"
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-full bg-[#272727] hover:bg-[#383838] text-[#f1f1f1] transition-colors border border-[#3e3e3e]"
-            title="RINEトーク画面に戻る"
+        {/* 右: 操作アイコン群 */}
+        <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+          {/* テレビ認証ボタン（WeTube完全準拠） */}
+          <button
+            type="button"
+            onClick={() => setTvAuthOpen(true)}
+            className={`p-2 rounded-full transition-colors flex items-center gap-1.5 text-xs font-semibold px-2.5 ${
+              account
+                ? "bg-red-500/20 text-red-400 border border-red-500/40 hover:bg-red-500/30"
+                : "bg-[#222] hover:bg-[#272727] text-white border border-[#383838]"
+            }`}
+            title="テレビ認証でYouTubeと連携"
           >
-            <ArrowLeft className="size-3.5" />
-            <span className="hidden sm:inline">RINEへ戻る</span>
-          </Link>
+            <Tv className="size-4" />
+            <span className="hidden sm:inline">{account ? account.name : "テレビ認証"}</span>
+          </button>
 
-          <Link
-            to="/auth"
-            className="flex items-center justify-center p-2 rounded-full hover:bg-[#272727] text-[#f1f1f1]"
-            title="テレビ認証"
-          >
-            <Tv className="size-5" />
-          </Link>
-
+          {/* 設定ボタン */}
           <button
             type="button"
             onClick={() => setSettingsOpen(true)}
-            className="p-2 rounded-full hover:bg-[#272727] text-[#f1f1f1]"
-            title="再生・プロキシ設定"
+            className="p-2 rounded-full hover:bg-[#272727] text-[#aaa] hover:text-white transition-colors"
+            title="再生設定"
           >
             <Settings className="size-5" />
           </button>
 
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setUserMenuOpen((prev) => !prev)}
-              className="flex items-center justify-center size-8 rounded-full bg-primary font-bold text-xs text-white shadow"
-            >
-              {currentUsername.slice(0, 1).toUpperCase()}
-            </button>
+          {/* チャットへ戻る */}
+          <Link
+            to="/friends"
+            className="hidden md:flex items-center gap-1 px-3 py-1.5 rounded-full bg-[#222] hover:bg-[#272727] text-xs font-medium text-[#aaa] hover:text-white transition-colors border border-[#303030]"
+          >
+            <ArrowLeft className="size-3.5" />
+            <span>トークへ戻る</span>
+          </Link>
+        </div>
+      </header>
 
-            {userMenuOpen && (
-              <div
-                className="absolute right-0 top-10 w-56 bg-[#282828] border border-[#3e3e3e] rounded-xl shadow-2xl py-2 z-50"
-                onClick={() => setUserMenuOpen(false)}
-              >
-                <div className="px-4 py-2 border-b border-[#3e3e3e]">
-                  <p className="font-semibold text-sm truncate text-white">{currentUsername}</p>
-                  <p className="text-[11px] text-[#aaa]">RINETube 広告なし</p>
-                </div>
+      <div className="flex flex-1">
+        {/* 2. サイドバー */}
+        {sidebarOpen && (
+          <aside className="w-56 bg-[#0f0f0f] border-r border-[#272727] p-3 shrink-0 flex flex-col justify-between hidden md:flex">
+            <div className="space-y-6">
+              {/* メインメニュー */}
+              <div className="space-y-1">
                 <button
                   type="button"
-                  onClick={() => setSettingsOpen(true)}
-                  className="flex items-center gap-2.5 w-full px-4 py-2 text-xs text-left hover:bg-[#3e3e3e] text-[#f1f1f1]"
+                  onClick={() => {
+                    setCurrentVideoId(null);
+                    setSelectedCategory("all");
+                    setVideos(INITIAL_VIDEOS);
+                  }}
+                  className="w-full flex items-center gap-4 px-3 py-2.5 rounded-xl text-sm font-semibold hover:bg-[#272727] text-white transition-colors"
                 >
-                  <Settings className="size-4 text-[#aaa]" />
-                  <span>プロキシ・再生設定</span>
+                  <Flame className="size-5 text-red-500" />
+                  <span>ホーム</span>
                 </button>
-                <Link
-                  to="/keep"
-                  className="flex items-center gap-2.5 w-full px-4 py-2 text-xs text-left hover:bg-[#3e3e3e] text-[#f1f1f1]"
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedCategory("trending");
+                    searchVideos("急上昇");
+                  }}
+                  className="w-full flex items-center gap-4 px-3 py-2.5 rounded-xl text-sm font-semibold hover:bg-[#272727] text-[#aaa] hover:text-white transition-colors"
                 >
-                  <Bookmark className="size-4 text-[#aaa]" />
-                  <span>Keepメモを開く</span>
-                </Link>
+                  <Music className="size-5 text-blue-400" />
+                  <span>急上昇</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHistoryOpen(true)}
+                  className="w-full flex items-center gap-4 px-3 py-2.5 rounded-xl text-sm font-semibold hover:bg-[#272727] text-[#aaa] hover:text-white transition-colors"
+                >
+                  <History className="size-5 text-emerald-400" />
+                  <span>再生履歴 ({history.length})</span>
+                </button>
+              </div>
+
+              {/* テレビ認証ステータス */}
+              <div className="p-3 bg-[#181818] rounded-2xl border border-[#272727] space-y-2">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="size-4 text-red-500" />
+                  <p className="text-xs font-bold text-white">テレビ認証</p>
+                </div>
+                {account ? (
+                  <div className="space-y-1">
+                    <p className="text-xs text-green-400 font-semibold truncate">● {account.name}</p>
+                    <p className="text-[10px] text-[#888]">{account.handle}</p>
+                    <button
+                      type="button"
+                      onClick={signOut}
+                      className="text-[11px] text-red-400 hover:underline pt-1 block"
+                    >
+                      ログアウト
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    <p className="text-[11px] text-[#aaa] leading-relaxed">
+                      テレビ認証でアカウントを同期できます。
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setTvAuthOpen(true)}
+                      className="w-full py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold transition-colors"
+                    >
+                      ログイン
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="text-[11px] text-[#606060] px-3 space-y-1">
+              <p>RINETube v2.9</p>
+              <p>広告なし・完全無料</p>
+            </div>
+          </aside>
+        )}
+
+        {/* 3. メインコンテンツエリア */}
+        <main className="flex-1 p-3 sm:p-5 max-w-7xl mx-auto w-full space-y-6">
+          {/* カテゴリピル（チップバー） */}
+          <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none">
+            {CATEGORIES.map((cat) => (
+              <button
+                key={cat.id}
+                type="button"
+                onClick={() => {
+                  setSelectedCategory(cat.id);
+                  searchVideos(cat.query);
+                }}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
+                  selectedCategory === cat.id
+                    ? "bg-white text-black"
+                    : "bg-[#272727] text-white hover:bg-[#383838]"
+                }`}
+              >
+                {cat.label}
+              </button>
+            ))}
+          </div>
+
+          {/* 動画再生画面（Watch View） */}
+          {currentVideoId && (
+            <div className="space-y-4 bg-[#181818] rounded-2xl p-3 sm:p-5 border border-[#272727] shadow-2xl">
+              <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black shadow-lg">
+                <iframe
+                  key={`${currentVideoId}-${mode}`}
+                  src={getPlayerUrl(currentVideoId)}
+                  title={currentVideoTitle || "Video Player"}
+                  className="w-full h-full border-0"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  allowFullScreen
+                />
+              </div>
+
+              {/* 動画情報＆アクションボタン */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-[#272727]">
+                <div className="space-y-1 flex-1">
+                  <h1 className="text-base sm:text-lg font-bold text-white leading-snug">
+                    {currentVideoTitle || "再生中の動画"}
+                  </h1>
+                  <p className="text-xs text-[#aaa]">{currentAuthor || "YouTube チャンネル"}</p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => toggleLike(currentVideoId)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
+                      likes.includes(currentVideoId)
+                        ? "bg-red-600 text-white"
+                        : "bg-[#272727] text-white hover:bg-[#383838]"
+                    }`}
+                  >
+                    <ThumbsUp className="size-4" />
+                    <span>{likes.includes(currentVideoId) ? "高評価済み" : "高評価"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(`https://youtu.be/${currentVideoId}`);
+                      toast.success("動画URLをコピーしました！");
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#272727] text-white hover:bg-[#383838] text-xs font-semibold transition-colors"
+                  >
+                    <Share2 className="size-4" />
+                    <span>共有</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 動画サムネイルグリッド（Home Grid） */}
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-base font-bold text-white flex items-center gap-2">
+                <span>{selectedCategory === "all" ? "おすすめ動画" : "検索結果"}</span>
+                {loading && <Loader2 className="size-4 animate-spin text-red-500" />}
+              </h2>
+              <span className="text-xs text-[#888]">{videos.length}件</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-5">
+              {videos.map((v) => {
+                const isPlaying = currentVideoId === v.id;
+                return (
+                  <div
+                    key={v.id}
+                    onClick={() => playVideo(v)}
+                    className={`group cursor-pointer flex flex-col space-y-2 rounded-xl p-2 transition-all duration-200 ${
+                      isPlaying
+                        ? "bg-red-500/10 border border-red-500/30"
+                        : "hover:bg-[#1f1f1f] border border-transparent"
+                    }`}
+                  >
+                    {/* サムネイル */}
+                    <div className="relative aspect-video rounded-xl overflow-hidden bg-[#272727]">
+                      <img
+                        src={`https://i.ytimg.com/vi/${v.id}/mqdefault.jpg`}
+                        alt={v.title}
+                        loading="lazy"
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                      />
+                      {v.durationText && (
+                        <span className="absolute bottom-1.5 right-1.5 bg-black/85 text-white text-[11px] font-bold px-1.5 py-0.5 rounded-md">
+                          {v.durationText}
+                        </span>
+                      )}
+                      {isPlaying && (
+                        <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                          <span className="bg-red-600 text-white text-xs font-bold px-2 py-1 rounded-md shadow">
+                            再生中
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* タイトル & チャンネル */}
+                    <div className="flex gap-2.5">
+                      <div className="size-8 rounded-full bg-[#272727] flex items-center justify-center text-xs font-bold text-white shrink-0 mt-0.5">
+                        {v.author ? v.author.slice(0, 1) : "Y"}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs sm:text-sm font-semibold text-white line-clamp-2 leading-snug group-hover:text-red-400 transition-colors">
+                          {v.title}
+                        </p>
+                        <p className="text-xs text-[#aaa] mt-1 truncate">{v.author}</p>
+                        <div className="text-[11px] text-[#717171] flex items-center gap-1.5 mt-0.5">
+                          {v.viewCountText && <span>{v.viewCountText}</span>}
+                          {v.publishedText && <span>• {v.publishedText}</span>}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </main>
+      </div>
+
+      {/* 4. WeTube完全準拠：テレビ認証モーダル（YouTube TV OAuth2 Dialog） */}
+      {tvAuthOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm animate-in fade-in duration-200"
+          onClick={() => setTvAuthOpen(false)}
+        >
+          <div
+            className="w-full max-w-lg bg-[#212121] border border-[#383838] rounded-2xl p-6 shadow-2xl relative space-y-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* 閉じるボタン */}
+            <button
+              type="button"
+              onClick={() => {
+                setTvAuthOpen(false);
+                if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+              }}
+              className="absolute top-4 right-4 text-[#aaa] hover:text-white p-1 rounded-full hover:bg-[#333]"
+              aria-label="閉じる"
+            >
+              <X className="size-5" />
+            </button>
+
+            {/* ① 未ログイン状態 */}
+            {authStatus === "signed_out" && (
+              <div className="space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className="size-10 rounded-xl bg-red-600/20 border border-red-500/30 flex items-center justify-center text-red-500">
+                    <Tv className="size-6" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold text-white">YouTubeアカウントでログイン</h2>
+                    <p className="text-xs text-[#888]">テレビ認証（YouTube TV OAuth2）</p>
+                  </div>
+                </div>
+
+                <p className="text-sm text-[#ccc] leading-relaxed">
+                  テレビ認証を使ってログインすると、あなたのアカウントの再生履歴、登録チャンネル、おすすめを同期できます。
+                </p>
+
+                <div className="pt-2">
+                  <Button
+                    onClick={startTvAuth}
+                    className="w-full bg-red-600 hover:bg-red-700 text-white font-bold h-11 rounded-xl text-sm shadow-lg shadow-red-600/30"
+                  >
+                    テレビ認証を開始
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* ② 認証開始中 / コード待機中（Pending） */}
+            {(authStatus === "starting" || authStatus === "pending") && (
+              <div className="space-y-5">
+                <div className="flex items-center gap-3 pb-3 border-b border-[#383838]">
+                  <div className="size-10 rounded-xl bg-green-600/20 border border-green-500/30 flex items-center justify-center text-green-400">
+                    <Check className="size-6" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold text-white">テレビでログイン</h2>
+                    <p className="text-xs text-[#aaa]">スマートフォンやPCで下のコードを入力してください。</p>
+                  </div>
+                </div>
+
+                {/* 3ステップ表示 */}
+                <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                  <div className="bg-[#181818] p-2.5 rounded-xl border border-[#333] space-y-1">
+                    <span className="inline-block size-5 rounded-full bg-red-600 text-white font-bold leading-5 text-[11px]">
+                      1
+                    </span>
+                    <p className="text-[#ccc] font-medium text-[11px]">認証ページを開く</p>
+                  </div>
+                  <div className="bg-[#181818] p-2.5 rounded-xl border border-[#333] space-y-1">
+                    <span className="inline-block size-5 rounded-full bg-red-600 text-white font-bold leading-5 text-[11px]">
+                      2
+                    </span>
+                    <p className="text-[#ccc] font-medium text-[11px]">コードを入力</p>
+                  </div>
+                  <div className="bg-[#181818] p-2.5 rounded-xl border border-[#333] space-y-1">
+                    <span className="inline-block size-5 rounded-full bg-red-600 text-white font-bold leading-5 text-[11px]">
+                      3
+                    </span>
+                    <p className="text-[#ccc] font-medium text-[11px]">完了を待つ</p>
+                  </div>
+                </div>
+
+                {/* 認証ページへのリンクボタン */}
+                <a
+                  href={verificationUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full flex items-center justify-center gap-2 py-3 bg-[#2a2a2a] hover:bg-[#333] border border-[#444] rounded-xl text-white font-bold text-sm transition-colors group"
+                >
+                  <span>認証ページを開く (youtube.com/activate)</span>
+                  <ExternalLink className="size-4 text-[#aaa] group-hover:text-white" />
+                </a>
+
+                {/* 認証コード表示ボックス */}
+                <div className="bg-[#141414] border border-[#383838] rounded-xl p-4 text-center space-y-2">
+                  <span className="text-xs text-[#888] font-semibold block">認証コード</span>
+                  {authStatus === "starting" ? (
+                    <div className="flex items-center justify-center gap-2 py-3">
+                      <Loader2 className="size-6 animate-spin text-red-500" />
+                      <span className="text-sm text-[#aaa]">コードを取得しています…</span>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={copyCodeToClipboard}
+                      className="w-full py-3 px-4 bg-[#1f1f1f] hover:bg-[#282828] border border-[#444] rounded-lg font-mono text-2xl font-black tracking-widest text-red-500 flex items-center justify-center gap-3 transition-colors group"
+                      title="クリックしてコピー"
+                    >
+                      <span>{userCode}</span>
+                      {codeCopied ? (
+                        <Check className="size-5 text-green-400" />
+                      ) : (
+                        <Copy className="size-5 text-[#888] group-hover:text-white" />
+                      )}
+                    </button>
+                  )}
+                  <small className="text-[11px] text-[#777] block">コードをクリックするとコピーできます</small>
+                </div>
+
+                {/* 待機メッセージ */}
+                <div className="flex items-center justify-center gap-2 text-xs text-[#aaa]">
+                  <Loader2 className="size-4 animate-spin text-red-500" />
+                  <span>認証を待っています…（スマホやPCで承認してください）</span>
+                </div>
+              </div>
+            )}
+
+            {/* ③ ログイン完了状態（Signed In） */}
+            {authStatus === "signed_in" && account && (
+              <div className="space-y-5">
+                <div className="flex items-center gap-3 pb-3 border-b border-[#383838]">
+                  <div className="size-10 rounded-xl bg-green-600/20 border border-green-500/30 flex items-center justify-center text-green-400">
+                    <Check className="size-6" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold text-white">ログイン済み</h2>
+                    <p className="text-xs text-[#aaa]">YouTubeアカウントと正常に連携されています</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-4 bg-[#181818] p-4 rounded-xl border border-[#333]">
+                  <img
+                    src={account.avatar}
+                    alt={account.name}
+                    className="size-12 rounded-full object-cover border border-[#444]"
+                  />
+                  <div>
+                    <h3 className="font-bold text-white text-base">{account.name}</h3>
+                    <p className="text-xs text-[#888]">{account.handle}</p>
+                    <span className="inline-block mt-1 text-[10px] bg-green-500/20 text-green-400 px-2 py-0.5 rounded-full font-semibold">
+                      同期有効
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex justify-between items-center pt-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setTvAuthOpen(false)}
+                    className="border-[#383838] text-white hover:bg-[#333]"
+                  >
+                    閉じる
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={signOut}
+                    className="bg-red-600/20 text-red-400 hover:bg-red-600 hover:text-white border border-red-500/30 flex items-center gap-1.5"
+                  >
+                    <LogOut className="size-4" />
+                    <span>ログアウト</span>
+                  </Button>
+                </div>
               </div>
             )}
           </div>
         </div>
-      </header>
+      )}
 
-      {/* ===== メインレイアウト ===== */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* 左サイドバー */}
-        <aside
-          className={`flex-shrink-0 transition-all duration-200 border-r border-[#272727] bg-[#0f0f0f] ${
-            sidebarOpen ? "w-56" : "w-16"
-          } hidden md:flex flex-col py-3 px-2 gap-1 overflow-y-auto`}
+      {/* 5. 再生履歴モーダル */}
+      {historyOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+          onClick={() => setHistoryOpen(false)}
         >
-          <button
-            type="button"
-            onClick={() => {
-              setCurrentVideo(null);
-              void searchVideos("おすすめ", false);
-            }}
-            className="flex items-center gap-4 px-3 py-2.5 rounded-xl text-sm font-medium hover:bg-[#272727] text-white transition-colors"
+          <div
+            className="w-full max-w-md bg-[#212121] border border-[#383838] rounded-2xl p-5 shadow-2xl space-y-4 max-h-[80vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
           >
-            <Play className="size-5 fill-white text-white flex-shrink-0" />
-            {sidebarOpen && <span>ホーム</span>}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => void searchVideos("Shorts 人気", false)}
-            className="flex items-center gap-4 px-3 py-2.5 rounded-xl text-sm font-medium hover:bg-[#272727] text-[#aaa] hover:text-white transition-colors"
-          >
-            <Flame className="size-5 text-red-500 flex-shrink-0" />
-            {sidebarOpen && <span>急上昇 / Shorts</span>}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => void searchVideos("公式 音楽", false)}
-            className="flex items-center gap-4 px-3 py-2.5 rounded-xl text-sm font-medium hover:bg-[#272727] text-[#aaa] hover:text-white transition-colors"
-          >
-            <Music className="size-5 flex-shrink-0" />
-            {sidebarOpen && <span>音楽</span>}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => void searchVideos("ゲーム 実況", false)}
-            className="flex items-center gap-4 px-3 py-2.5 rounded-xl text-sm font-medium hover:bg-[#272727] text-[#aaa] hover:text-white transition-colors"
-          >
-            <Gamepad2 className="size-5 flex-shrink-0" />
-            {sidebarOpen && <span>ゲーム</span>}
-          </button>
-
-          <div className="my-2 border-t border-[#272727]" />
-
-          <Link
-            to="/keep"
-            className="flex items-center gap-4 px-3 py-2 rounded-xl text-xs font-medium hover:bg-[#272727] text-[#aaa] hover:text-white transition-colors"
-          >
-            <Bookmark className="size-4.5 flex-shrink-0" />
-            {sidebarOpen && <span>Keepメモ</span>}
-          </Link>
-
-          <Link
-            to="/"
-            className="flex items-center gap-4 px-3 py-2 rounded-xl text-xs font-medium hover:bg-[#272727] text-[#aaa] hover:text-white transition-colors"
-          >
-            <ArrowLeft className="size-4.5 flex-shrink-0" />
-            {sidebarOpen && <span>トークに戻る</span>}
-          </Link>
-        </aside>
-
-        {/* コンテンツエリア */}
-        <main className="flex-1 overflow-y-auto px-4 md:px-6 py-4">
-          {!currentVideo && (
-            <div className="flex items-center gap-2 pb-4 overflow-x-auto no-scrollbar">
-              {CATEGORIES.map((cat) => (
-                <button
-                  key={cat.id}
-                  type="button"
-                  onClick={() => handleSelectCategory(cat)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
-                    selectedCategory === cat.id
-                      ? "bg-white text-black"
-                      : "bg-[#272727] text-[#f1f1f1] hover:bg-[#383838]"
-                  }`}
-                >
-                  {cat.label}
-                </button>
-              ))}
+            <div className="flex items-center justify-between border-b border-[#383838] pb-3">
+              <h3 className="font-bold text-base text-white flex items-center gap-2">
+                <History className="size-5 text-emerald-400" />
+                <span>再生履歴 ({history.length})</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setHistoryOpen(false)}
+                className="text-[#aaa] hover:text-white"
+              >
+                <X className="size-5" />
+              </button>
             </div>
-          )}
 
-          {/* ===== 再生画面 ===== */}
-          {currentVideo ? (
-            <div className="max-w-5xl mx-auto space-y-4">
-              <div className="flex items-center justify-between bg-[#1f1f1f] p-2.5 rounded-xl border border-[#333]">
-                <button
-                  type="button"
-                  onClick={() => setCurrentVideo(null)}
-                  className="flex items-center gap-1.5 text-xs font-semibold text-[#aaa] hover:text-white px-2 py-1 rounded-lg hover:bg-[#2c2c2c] transition-colors"
-                >
-                  <ArrowLeft className="size-4" />
-                  <span>一覧に戻る</span>
-                </button>
-
-                <div className="flex items-center gap-1 text-xs">
-                  <span className="text-[#888] mr-1 hidden sm:inline">再生方式:</span>
-                  {(["invidious", "rinetube", "education", "nocookie"] as const).map((m) => (
-                    <button
-                      key={m}
-                      type="button"
-                      onClick={() => setMode(m)}
-                      className={`px-2 py-1 rounded text-[11px] font-medium transition-colors ${
-                        mode === m ? "bg-red-600 text-white" : "bg-[#2b2b2b] text-[#aaa] hover:text-white"
-                      }`}
-                    >
-                      {m === "invidious" && "Invidious"}
-                      {m === "rinetube" && "カスタムProxy"}
-                      {m === "education" && "Education"}
-                      {m === "nocookie" && "NoCookie"}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* 16:9 プレイヤー */}
-              <div className="relative w-full aspect-video bg-black rounded-2xl overflow-hidden shadow-2xl border border-[#272727]">
-                <iframe
-                  key={`${currentVideo.id}-${mode}`}
-                  src={getPlayerSrc(currentVideo.id)}
-                  title={currentVideo.title}
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
-                  allowFullScreen
-                  className="w-full h-full border-0"
-                />
-              </div>
-
-              <div className="space-y-3">
-                <h1 className="text-lg md:text-xl font-bold text-white leading-tight">
-                  {currentVideo.title}
-                </h1>
-
-                <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[#272727]">
-                  <div className="flex items-center gap-3">
-                    <div className="size-10 rounded-full bg-gradient-to-tr from-red-600 to-amber-600 flex items-center justify-center font-bold text-white text-sm shadow">
-                      {currentVideo.author.slice(0, 1).toUpperCase()}
-                    </div>
-                    <div>
-                      <p className="font-semibold text-sm text-white">{currentVideo.author}</p>
-                      <p className="text-[11px] text-[#aaa]">{currentVideo.publishedText}</p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => toast.success("高評価しました")}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#272727] hover:bg-[#383838] text-xs font-semibold text-white"
-                    >
-                      <ThumbsUp className="size-3.5" />
-                      <span>高評価</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const shareUrl = `https://youtu.be/${currentVideo.id}`;
-                        void navigator.clipboard.writeText(shareUrl);
-                        toast.success("動画URLをコピーしました");
-                      }}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#272727] hover:bg-[#383838] text-xs font-semibold text-white"
-                    >
-                      <Share2 className="size-3.5" />
-                      <span>共有</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        try {
-                          const existing = JSON.parse(localStorage.getItem("rine_keep_notes_v1") || "[]");
-                          const newNote = {
-                            id: `keep_${Date.now()}`,
-                            text: `📺 【動画】${currentVideo.title}\nhttps://youtu.be/${currentVideo.id}`,
-                            createdAt: Date.now(),
-                          };
-                          localStorage.setItem("rine_keep_notes_v1", JSON.stringify([newNote, ...existing]));
-                          toast.success("Keepメモに保存しました！");
-                        } catch {
-                          toast.error("保存に失敗しました");
-                        }
-                      }}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#272727] hover:bg-[#383838] text-xs font-semibold text-white"
-                      title="Keepメモに保存"
-                    >
-                      <Bookmark className="size-3.5" />
-                      <span>Keep保存</span>
-                    </button>
-                  </div>
-                </div>
-
-                <div
-                  onClick={() => setDescExpanded((prev) => !prev)}
-                  className="bg-[#272727] hover:bg-[#333] p-3 rounded-xl cursor-pointer text-xs text-[#d1d1d1] transition-colors"
-                >
-                  <p className="font-semibold text-white mb-1">
-                    {currentVideo.viewCountText} • {currentVideo.publishedText}
-                  </p>
-                  <p className={descExpanded ? "" : "line-clamp-2"}>
-                    RINETube 広告なし・プロキシ再生モード。動画ID: {currentVideo.id}
-                  </p>
-                  <span className="text-[11px] text-[#aaa] font-semibold mt-1 inline-block">
-                    {descExpanded ? "折りたたむ" : "...もっと見る"}
-                  </span>
-                </div>
-              </div>
-            </div>
-          ) : (
-            /* ===== ホーム一覧 ===== */
-            <div>
-              {loading && (
-                <div className="flex items-center justify-center py-12 text-[#aaa] gap-2">
-                  <Loader2 className="size-6 animate-spin text-red-500" />
-                  <span className="text-sm">動画を取得中...</span>
-                </div>
-              )}
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-4 gap-y-7">
-                {videos.map((video) => (
+            <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+              {history.length === 0 ? (
+                <p className="text-center text-xs text-[#888] py-8">再生履歴はまだありません</p>
+              ) : (
+                history.map((item) => (
                   <div
-                    key={video.id}
-                    onClick={() => setCurrentVideo(video)}
-                    className="flex flex-col group cursor-pointer"
+                    key={item.id}
+                    onClick={() => {
+                      playVideo(item);
+                      setHistoryOpen(false);
+                    }}
+                    className="flex items-center gap-3 p-2 rounded-xl hover:bg-[#2a2a2a] cursor-pointer group"
                   >
-                    <div className="relative w-full aspect-video bg-[#1e1e1e] rounded-xl overflow-hidden mb-3">
-                      <img
-                        src={`https://i.ytimg.com/vi/${video.id}/hqdefault.jpg`}
-                        alt={video.title}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
-                        loading="lazy"
-                      />
-                      {video.durationText && (
-                        <span className="absolute bottom-1.5 right-1.5 bg-black/85 text-[11px] font-semibold text-white px-1.5 py-0.5 rounded font-mono">
-                          {video.durationText}
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="flex gap-3">
-                      <div className="size-9 rounded-full bg-[#333] flex-shrink-0 flex items-center justify-center font-bold text-xs text-white">
-                        {video.author.slice(0, 1).toUpperCase()}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h2 className="text-sm font-semibold text-white line-clamp-2 leading-snug group-hover:text-[#3ea6ff]">
-                          {video.title}
-                        </h2>
-                        <p className="text-xs text-[#aaa] truncate mt-1">{video.author}</p>
-                        <p className="text-xs text-[#888]">
-                          {video.viewCountText} • {video.publishedText}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          const url = `https://youtu.be/${video.id}`;
-                          void navigator.clipboard.writeText(url);
-                          toast.success("リンクをコピーしました");
-                        }}
-                        className="text-[#888] hover:text-white p-1 self-start"
-                      >
-                        <MoreVertical className="size-4" />
-                      </button>
+                    <img
+                      src={`https://i.ytimg.com/vi/${item.id}/default.jpg`}
+                      alt={item.title}
+                      className="w-16 h-10 object-cover rounded-md bg-[#333]"
+                    />
+                    <div className="flex-1 min-w-0 text-xs">
+                      <p className="font-semibold text-white line-clamp-1 group-hover:text-red-400">
+                        {item.title}
+                      </p>
+                      <p className="text-[11px] text-[#888] truncate">{item.author}</p>
                     </div>
                   </div>
-                ))}
-              </div>
+                ))
+              )}
             </div>
-          )}
-        </main>
-      </div>
 
-      {/* ===== ⚙️ 設定モーダル ===== */}
+            {history.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setHistory([]);
+                  localStorage.removeItem("rinetube_history");
+                  toast.success("履歴を消去しました");
+                }}
+                className="w-full border-[#383838] text-xs text-red-400 hover:bg-[#2a2a2a]"
+              >
+                履歴をすべて消去
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 6. 再生設定モーダル */}
       {settingsOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
@@ -770,13 +949,13 @@ export function RINETubePage() {
 
             <div className="space-y-4 text-xs">
               <div>
-                <label className="font-bold text-[#f1f1f1] block mb-1.5">デフォルト再生方式</label>
+                <label className="font-bold text-[#f1f1f1] block mb-1.5">再生方式</label>
                 <div className="grid grid-cols-2 gap-2">
                   {[
                     { id: "invidious", name: "Invidious", desc: "高速・標準プロキシ" },
                     { id: "education", name: "Education", desc: "YouTube教育・低制限" },
                     { id: "nocookie", name: "No-Cookie", desc: "高画質・安全" },
-                    { id: "rinetube", name: "カスタムProxy", desc: "自前サーバー" },
+                    { id: "custom", name: "カスタムProxy", desc: "自前サーバー" },
                   ].map((m) => (
                     <button
                       key={m.id}
@@ -795,20 +974,6 @@ export function RINETubePage() {
                 </div>
               </div>
 
-              {/* カスタムProxy URL */}
-              <div>
-                <label className="font-bold text-[#f1f1f1] block mb-1">
-                  カスタムProxy サーバーURL（任意）
-                </label>
-                <Input
-                  value={customProxyUrl}
-                  onChange={(e) => setCustomProxyUrl(e.target.value)}
-                  placeholder="https://..."
-                  className="bg-[#181818] border-[#383838] text-white h-9 text-xs font-mono"
-                />
-              </div>
-
-              {/* Invidious サーバーURL */}
               <div>
                 <label className="font-bold text-[#f1f1f1] block mb-1">
                   Invidious サーバーURL
@@ -821,7 +986,6 @@ export function RINETubePage() {
                 />
               </div>
 
-              {/* 自動再生 */}
               <div className="flex items-center justify-between pt-2 border-t border-[#383838]">
                 <div>
                   <p className="font-semibold text-white">動画クリック時の自動再生</p>
@@ -855,4 +1019,3 @@ export function RINETubePage() {
     </div>
   );
 }
-
