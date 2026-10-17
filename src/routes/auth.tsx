@@ -316,4 +316,4 @@ function AuthPage() {
                     id="invite"
                     value={inviteCode}
                     onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
-                    placeholder="友だちのID (例:
+                    placeholder="友だちのID (例:TAROU123)"
