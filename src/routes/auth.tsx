@@ -312,8 +312,93 @@ function AuthPage() {
                     </Label>
                     <span className="text-[10px] text-muted-foreground">特典付き</span>
                   </div>
-                  <Input
+                                   <Input
                     id="invite"
                     value={inviteCode}
                     onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
                     placeholder="友だちのID (例:TAROU123)"
+                  />
+                </div>
+              )}
+            </form>
+          </>
+        ) : (
+          <div className="space-y-4">
+            <div className="text-center">
+              <Smartphone className="mx-auto mb-2 size-10 text-primary" />
+              <h2 className="font-bold">テレビ認証</h2>
+              <p className="text-sm text-muted-foreground">
+                テレビに表示されたコードを入力してください。
+              </p>
+            </div>
+            <form onSubmit={handleApproveTv} className="space-y-3">
+              <Input
+                value={inputTvCode}
+                onChange={(e) => setInputTvCode(e.target.value)}
+                placeholder="123-456"
+                maxLength={7}
+                required
+              />
+              <Button type="submit" className="w-full" disabled={busy}>
+                {busy ? "認証中..." : "テレビを認証する"}
+              </Button>
+            </form>
+            <div className="text-center">
+              <button
+                type="button"
+                className="text-sm text-primary underline"
+                onClick={() => setTvRole("display")}
+              >
+                テレビに戻る
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="mt-4 space-y-3">
+          {mode === "tv" && tvRole === "display" && (
+            <div className="rounded-xl bg-muted p-4 text-center">
+              <p className="text-sm text-muted-foreground">
+                テレビに表示するコード
+              </p>
+              <p className="my-3 text-3xl font-black tracking-widest">
+                {tvCode || "--- ---"}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                残り時間: {Math.floor(tvCountdown / 60)}:
+                {String(tvCountdown % 60).padStart(2, "0")}
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                className="mt-3"
+                onClick={generateNewTvCode}
+              >
+                <RefreshCw className="mr-2 size-4" />
+                コードを更新
+              </Button>
+            </div>
+          )}
+
+          {mode !== "tv" && (
+            <>
+              <Button type="submit" form="auth-form" className="hidden" />
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                onClick={google}
+              >
+                Googleでログイン
+              </Button>
+            </>
+          )}
+        </div>
+
+        <p className="mt-5 text-center text-xs text-muted-foreground">
+          ログインに問題がある場合は、入力した名前とパスワードを確認してください。
+        </p>
+      </div>
+    </div>
+  );
+}
