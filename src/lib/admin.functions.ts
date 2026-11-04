@@ -20,20 +20,139 @@ async function assertAdmin(supabase: { rpc: (fn: string, args: unknown) => Promi
   if (data !== true) throw new Error("管理者のみ操作できます");
 }
 
-// 管理者パスワードを入力して自分のアカウントに管理者権限を付与する
+// スタッフ（管理者 or モデレーター）かどうか
+async function getStaffRole(
+  supabase: { rpc: (fn: string, args: unknown) => Promise<{ data: unknown }> },
+  userId: string,
+): Promise<"admin" | "moderator" | null> {
+  const { data: a } = await supabase.rpc("has_role", { _user_id: userId, _role: "admin" });
+  if (a === true) return "admin";
+  const { data: m } = await supabase.rpc("has_role", { _user_id: userId, _role: "moderator" });
+  return m === true ? "moderator" : null;
+}
+
+async function assertStaff(supabase: never, userId: string) {
+  const role = await getStaffRole(supabase, userId);
+  if (!role) throw new Error("運営スタッフのみ操作できます");
+  return role;
+}
+
+async function sha256(text: string) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// パスワード入力で権限を付与（マスターパスワード or 管理者が発行した役職別パスワード）
 export const unlockAdmin = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { password: string }) => input)
-  .handler(async ({ data, context }) => {
-    const expected = process.env["ADMIN_PASSWORD"];
-    if (!expected) throw new Error("管理者パスワードが設定されていません");
+  .handler(async ({ data, context }): Promise<{ ok: true; role: "admin" | "moderator" }> => {
     const given = (data.password ?? "").trim();
-    if (given.length === 0 || given !== expected) throw new Error("パスワードが違います");
-
+    if (given.length === 0) throw new Error("パスワードを入力してください");
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+
+    const expected = process.env["ADMIN_PASSWORD"];
+    if (expected && given === expected) {
+      await supabaseAdmin
+        .from("user_roles")
+        .upsert({ user_id: context.userId, role: "admin" }, { onConflict: "user_id,role" });
+      return { ok: true, role: "admin" };
+    }
+
+    const hash = await sha256(given.toUpperCase());
+    const { data: pc } = await supabaseAdmin
+      .from("role_passcodes")
+      .select("*")
+      .eq("code_hash", hash)
+      .maybeSingle();
+    if (
+      !pc ||
+      pc.revoked ||
+      pc.used_count >= pc.max_uses ||
+      (pc.expires_at && new Date(pc.expires_at).getTime() < Date.now())
+    ) {
+      throw new Error("パスワードが違うか、有効期限切れです");
+    }
+    if (pc.role !== "admin" && pc.role !== "moderator") throw new Error("無効なパスワードです");
+
+    await supabaseAdmin
+      .from("role_passcodes")
+      .update({ used_count: pc.used_count + 1, last_used_at: new Date().toISOString() })
+      .eq("id", pc.id);
     await supabaseAdmin
       .from("user_roles")
-      .upsert({ user_id: context.userId, role: "admin" }, { onConflict: "user_id,role" });
+      .upsert({ user_id: context.userId, role: pc.role }, { onConflict: "user_id,role" });
+    return { ok: true, role: pc.role };
+  });
+
+// 自分の役職
+export const getMyStaffRole = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => getStaffRole(context.supabase as never, context.userId));
+
+export type RolePasscode = {
+  id: string;
+  role: "admin" | "moderator" | "user";
+  label: string;
+  max_uses: number;
+  used_count: number;
+  expires_at: string | null;
+  revoked: boolean;
+  created_at: string;
+  last_used_at: string | null;
+};
+
+// 役職別パスワード発行（管理者のみ）。平文は発行時に1回だけ返す
+export const adminCreatePasscode = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(
+    (input: { role: "admin" | "moderator"; label?: string; maxUses?: number; days?: number }) => input,
+  )
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context.supabase as never, context.userId);
+    if (data.role !== "admin" && data.role !== "moderator") throw new Error("役職が不正です");
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    const bytes = crypto.getRandomValues(new Uint8Array(12));
+    let raw = "";
+    for (const b of bytes) raw += chars[b % chars.length];
+    const code = `${data.role === "admin" ? "ADM" : "MOD"}-${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}`;
+    const maxUses = Math.min(Math.max(Math.floor(data.maxUses ?? 1), 1), 100);
+    const days = Math.floor(data.days ?? 7);
+    const expires_at = days > 0 ? new Date(Date.now() + days * 86400000).toISOString() : null;
+
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { error } = await supabaseAdmin.from("role_passcodes").insert({
+      code_hash: await sha256(code),
+      role: data.role,
+      label: (data.label ?? "").trim().slice(0, 60),
+      max_uses: maxUses,
+      expires_at,
+      created_by: context.userId,
+    });
+    if (error) throw new Error("発行に失敗しました");
+    return { code };
+  });
+
+export const adminListPasscodes = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }): Promise<RolePasscode[]> => {
+    await assertAdmin(context.supabase as never, context.userId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data } = await supabaseAdmin
+      .from("role_passcodes")
+      .select("id, role, label, max_uses, used_count, expires_at, revoked, created_at, last_used_at")
+      .order("created_at", { ascending: false })
+      .limit(100);
+    return (data ?? []) as RolePasscode[];
+  });
+
+export const adminRevokePasscode = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { id: string }) => input)
+  .handler(async ({ data, context }) => {
+    await assertAdmin(context.supabase as never, context.userId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    await supabaseAdmin.from("role_passcodes").update({ revoked: true }).eq("id", data.id);
     return { ok: true };
   });
 
@@ -42,7 +161,7 @@ export const adminListUsers = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { q?: string }) => input)
   .handler(async ({ data, context }): Promise<AdminUser[]> => {
-    await assertAdmin(context.supabase as never, context.userId);
+    await assertStaff(context.supabase as never, context.userId);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
     let query = supabaseAdmin
@@ -104,7 +223,11 @@ export const adminSetBan = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { userId: string; banned: boolean; reason?: string; days?: number }) => input)
   .handler(async ({ data, context }) => {
-    await assertAdmin(context.supabase as never, context.userId);
+    const myRole = await assertStaff(context.supabase as never, context.userId);
+    if (myRole === "moderator") {
+      const targetRole = await getStaffRole(context.supabase as never, data.userId);
+      if (targetRole) throw new Error("モデレーターは運営スタッフを停止できません");
+    }
     if (data.userId === context.userId) throw new Error("自分は停止できません");
 
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
@@ -130,7 +253,7 @@ export const adminDeleteUserMessages = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { userId: string }) => input)
   .handler(async ({ data, context }) => {
-    await assertAdmin(context.supabase as never, context.userId);
+    await assertStaff(context.supabase as never, context.userId);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     await supabaseAdmin.from("messages").delete().eq("sender_id", data.userId);
     await supabaseAdmin.from("group_messages").delete().eq("sender_id", data.userId);
@@ -154,7 +277,7 @@ export const adminListGroups = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { q?: string; openOnly?: boolean }) => input)
   .handler(async ({ data, context }): Promise<AdminGroup[]> => {
-    await assertAdmin(context.supabase as never, context.userId);
+    await assertStaff(context.supabase as never, context.userId);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
     let query = supabaseAdmin
@@ -216,7 +339,7 @@ export const adminSetGroupOpen = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { groupId: string; isOpen: boolean }) => input)
   .handler(async ({ data, context }) => {
-    await assertAdmin(context.supabase as never, context.userId);
+    await assertStaff(context.supabase as never, context.userId);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     await supabaseAdmin.from("groups").update({ is_open: data.isOpen }).eq("id", data.groupId);
     return { ok: true };
@@ -227,7 +350,7 @@ export const adminClearGroupMessages = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { groupId: string }) => input)
   .handler(async ({ data, context }) => {
-    await assertAdmin(context.supabase as never, context.userId);
+    await assertStaff(context.supabase as never, context.userId);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     await supabaseAdmin.from("group_messages").delete().eq("group_id", data.groupId);
     return { ok: true };
@@ -249,7 +372,7 @@ export const adminSearchMessages = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { q?: string }) => input)
   .handler(async ({ data, context }): Promise<AdminMessage[]> => {
-    await assertAdmin(context.supabase as never, context.userId);
+    await assertStaff(context.supabase as never, context.userId);
     const q = (data.q ?? "").trim();
     if (!q) return [];
 
@@ -318,7 +441,7 @@ export const adminDeleteMessage = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { kind: "direct" | "group"; id: string }) => input)
   .handler(async ({ data, context }) => {
-    await assertAdmin(context.supabase as never, context.userId);
+    await assertStaff(context.supabase as never, context.userId);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     if (data.kind === "direct") {
       await supabaseAdmin.from("messages").delete().eq("id", data.id);
@@ -332,7 +455,7 @@ export const adminDeleteMessage = createServerFn({ method: "POST" })
 export const adminStats = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    await assertAdmin(context.supabase as never, context.userId);
+    await assertStaff(context.supabase as never, context.userId);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
     const todayStart = new Date();
