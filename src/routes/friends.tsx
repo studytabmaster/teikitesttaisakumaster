@@ -104,7 +104,7 @@ function FriendsPage() {
         inc.map((r) => ({
           ...r,
           status: r.status as "pending" | "accepted" | "rejected",
-          sender: senderMap.get(r.sender_id) as Profile | undefined,
+          sender: senderMap.find((p) => p.id === r.sender_id) as Profile | undefined,
         }))
       );
     } else {
@@ -126,7 +126,7 @@ function FriendsPage() {
         out.map((r) => ({
           ...r,
           status: r.status as "pending" | "accepted" | "rejected",
-          receiver: recMap.get(r.receiver_id) as Profile | undefined,
+          receiver: recMap.find((p) => p.id === r.receiver_id) as Profile | undefined,
         }))
       );
     } else {

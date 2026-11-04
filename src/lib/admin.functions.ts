@@ -461,9 +461,26 @@ export const adminCloseAnnouncement = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-export const getActiveAnnouncement = createServerFn({ method: "GET" }).handler(async () => {
-  return null;
-});
+export type AnnouncementData = {
+  id: string;
+  active: boolean;
+  content: string;
+  pollOptions: string[] | null;
+  pollCounts: number[] | null;
+  hasVotedIndex: number | null;
+};
+
+export const getActiveAnnouncement = createServerFn({ method: "GET" }).handler(
+  async (): Promise<AnnouncementData | null> => {
+    return null;
+  },
+);
+
+export const voteAnnouncement = createServerFn({ method: "POST" })
+  .inputValidator((input: { optionIndex: number }) => input)
+  .handler(async ({ data }) => {
+    return { pollCounts: [] as number[], hasVotedIndex: data.optionIndex as number | null };
+  });
 
 // オープンチャットへの一斉アナウンス送信
 export const adminBroadcastToOpenGroups = createServerFn({ method: "POST" })

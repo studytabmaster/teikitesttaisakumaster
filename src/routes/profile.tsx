@@ -81,7 +81,7 @@ function ProfilePage() {
       let finalUrl = dataUrl;
       try {
         const blob = await (await fetch(dataUrl)).blob();
-        finalUrl = await withTimeout(uploadToCloudinary(blob), 8000);
+        finalUrl = (await withTimeout(uploadToCloudinary(blob), 8000)) ?? dataUrl;
       } catch {
         finalUrl = dataUrl;
       }

@@ -125,7 +125,7 @@ function extractVideoId(text: string): string | null {
   const match = trimmed.match(
     /(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/|v\/))([a-zA-Z0-9_-]{11})/
   );
-  return match ? match[1] : null;
+  return match?.[1] ?? null;
 }
 
 export default function RINETubePage() {

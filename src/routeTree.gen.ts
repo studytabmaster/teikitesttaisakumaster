@@ -22,6 +22,7 @@ import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as QaRouteImport } from './routes/qa'
 import { Route as TermsRouteImport } from './routes/terms'
+import { Route as YoutubeRouteImport } from './routes/youtube'
 import { Route as ChatFriendIdRouteImport } from './routes/chat.$friendId'
 import { Route as FriendFriendIdRouteImport } from './routes/friend.$friendId'
 import { Route as GroupGroupIdRouteImport } from './routes/group.$groupId'
@@ -91,6 +92,11 @@ const TermsRoute = TermsRouteImport.update({
   path: '/terms',
   getParentRoute: () => rootRouteImport,
 } as any)
+const YoutubeRoute = YoutubeRouteImport.update({
+  id: '/youtube',
+  path: '/youtube',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ChatFriendIdRoute = ChatFriendIdRouteImport.update({
   id: '/chat/$friendId',
   path: '/chat/$friendId',
@@ -121,6 +127,7 @@ export interface FileRoutesByFullPath {
   '/profile': typeof ProfileRoute
   '/qa': typeof QaRoute
   '/terms': typeof TermsRoute
+  '/youtube': typeof YoutubeRoute
   '/chat/$friendId': typeof ChatFriendIdRoute
   '/friend/$friendId': typeof FriendFriendIdRoute
   '/group/$groupId': typeof GroupGroupIdRoute
@@ -139,6 +146,7 @@ export interface FileRoutesByTo {
   '/profile': typeof ProfileRoute
   '/qa': typeof QaRoute
   '/terms': typeof TermsRoute
+  '/youtube': typeof YoutubeRoute
   '/chat/$friendId': typeof ChatFriendIdRoute
   '/friend/$friendId': typeof FriendFriendIdRoute
   '/group/$groupId': typeof GroupGroupIdRoute
@@ -158,6 +166,7 @@ export interface FileRoutesById {
   '/profile': typeof ProfileRoute
   '/qa': typeof QaRoute
   '/terms': typeof TermsRoute
+  '/youtube': typeof YoutubeRoute
   '/chat/$friendId': typeof ChatFriendIdRoute
   '/friend/$friendId': typeof FriendFriendIdRoute
   '/group/$groupId': typeof GroupGroupIdRoute
@@ -178,6 +187,7 @@ export interface FileRouteTypes {
     | '/profile'
     | '/qa'
     | '/terms'
+    | '/youtube'
     | '/chat/$friendId'
     | '/friend/$friendId'
     | '/group/$groupId'
@@ -196,6 +206,7 @@ export interface FileRouteTypes {
     | '/profile'
     | '/qa'
     | '/terms'
+    | '/youtube'
     | '/chat/$friendId'
     | '/friend/$friendId'
     | '/group/$groupId'
@@ -214,6 +225,7 @@ export interface FileRouteTypes {
     | '/profile'
     | '/qa'
     | '/terms'
+    | '/youtube'
     | '/chat/$friendId'
     | '/friend/$friendId'
     | '/group/$groupId'
@@ -233,6 +245,7 @@ export interface RootRouteChildren {
   ProfileRoute: typeof ProfileRoute
   QaRoute: typeof QaRoute
   TermsRoute: typeof TermsRoute
+  YoutubeRoute: typeof YoutubeRoute
   ChatFriendIdRoute: typeof ChatFriendIdRoute
   FriendFriendIdRoute: typeof FriendFriendIdRoute
   GroupGroupIdRoute: typeof GroupGroupIdRoute
@@ -331,6 +344,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TermsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/youtube': {
+      id: '/youtube'
+      path: '/youtube'
+      fullPath: '/youtube'
+      preLoaderRoute: typeof YoutubeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/chat/$friendId': {
       id: '/chat/$friendId'
       path: '/chat/$friendId'
@@ -369,6 +389,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProfileRoute: ProfileRoute,
   QaRoute: QaRoute,
   TermsRoute: TermsRoute,
+  YoutubeRoute: YoutubeRoute,
   ChatFriendIdRoute: ChatFriendIdRoute,
   FriendFriendIdRoute: FriendFriendIdRoute,
   GroupGroupIdRoute: GroupGroupIdRoute,
