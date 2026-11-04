@@ -10,7 +10,7 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.5"
+    PostgrestVersion: "14.17"
   }
   public: {
     Tables: {
@@ -506,6 +506,48 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      role_passcodes: {
+        Row: {
+          code_hash: string
+          created_at: string
+          created_by: string | null
+          expires_at: string | null
+          id: string
+          label: string
+          last_used_at: string | null
+          max_uses: number
+          revoked: boolean
+          role: Database["public"]["Enums"]["app_role"]
+          used_count: number
+        }
+        Insert: {
+          code_hash: string
+          created_at?: string
+          created_by?: string | null
+          expires_at?: string | null
+          id?: string
+          label?: string
+          last_used_at?: string | null
+          max_uses?: number
+          revoked?: boolean
+          role: Database["public"]["Enums"]["app_role"]
+          used_count?: number
+        }
+        Update: {
+          code_hash?: string
+          created_at?: string
+          created_by?: string | null
+          expires_at?: string | null
+          id?: string
+          label?: string
+          last_used_at?: string | null
+          max_uses?: number
+          revoked?: boolean
+          role?: Database["public"]["Enums"]["app_role"]
+          used_count?: number
+        }
+        Relationships: []
       }
       user_bans: {
         Row: {
