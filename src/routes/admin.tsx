@@ -168,7 +168,7 @@ function AdminPage() {
           .select("id, display_name, username, friend_code, avatar_url, status_message")
           .in("id", ids);
         const map: Record<string, Profile> = {};
-        for (const p of profs ?? []) map[p.id] = p as Profile;
+        for (const p of profs ?? []) map[p.id] = p as unknown as Profile;
         setProfiles(map);
       }
     }
