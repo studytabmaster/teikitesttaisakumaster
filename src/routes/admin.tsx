@@ -415,7 +415,7 @@ function AdminPage() {
 
   return (
     <AppShell title="管理者パネル">
-      <div className="mx-auto max-w-5xl space-y-6 px-4 py-6 sm:px-6">
+      <div className="mx-auto w-full max-w-5xl min-w-0 space-y-6 overflow-x-hidden px-4 py-6 sm:px-6">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-4">
           <div>
             <h1 className="text-xl font-bold flex items-center gap-2">
@@ -441,7 +441,7 @@ function AdminPage() {
         </div>
 
         <Tabs defaultValue="overview" className="space-y-4">
-          <TabsList className="grid grid-cols-5 w-full max-w-2xl">
+          <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1 overflow-x-auto [&>button]:flex-1 [&>button]:min-w-[90px] [&>button]:whitespace-nowrap">
             <TabsTrigger value="overview">概要</TabsTrigger>
             <TabsTrigger value="invites" className="gap-1">
               <Gift className="size-3.5 text-primary" /> 招待・ランク

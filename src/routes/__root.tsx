@@ -4,6 +4,7 @@ import {
   Link,
   createRootRouteWithContext,
   useRouter,
+  useRouterState,
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
@@ -242,6 +243,12 @@ function RootShell({ children }: { children: ReactNode }) {
   );
 }
 
+function SideAdsGate({ children }: { children: ReactNode }) {
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  if (pathname.startsWith("/youtube") || pathname.startsWith("/admin")) return null;
+  return <>{children}</>;
+}
+
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
 
@@ -257,8 +264,9 @@ function RootComponent() {
 
             <Outlet />
 
-            {/* PCのみ左右に160×600広告を表示 */}
-            <div className="hidden min-[840px]:block">
+            {/* 広い画面のみ左右に160×600広告（YouTube・管理画面では非表示） */}
+            <SideAdsGate>
+            <div className="hidden min-[1440px]:block">
 
               {/* 左広告 */}
               <aside
@@ -293,6 +301,7 @@ function RootComponent() {
               </aside>
 
             </div>
+            </SideAdsGate>
           </GroupCallProvider>
         </CallProvider>
       </AuthProvider>
