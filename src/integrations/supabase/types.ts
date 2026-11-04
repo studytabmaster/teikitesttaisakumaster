@@ -507,6 +507,48 @@ export type Database = {
           },
         ]
       }
+      role_passcodes: {
+        Row: {
+          code_hash: string
+          created_at: string
+          created_by: string | null
+          expires_at: string | null
+          id: string
+          label: string
+          last_used_at: string | null
+          max_uses: number
+          revoked: boolean
+          role: Database["public"]["Enums"]["app_role"]
+          used_count: number
+        }
+        Insert: {
+          code_hash: string
+          created_at?: string
+          created_by?: string | null
+          expires_at?: string | null
+          id?: string
+          label?: string
+          last_used_at?: string | null
+          max_uses?: number
+          revoked?: boolean
+          role: Database["public"]["Enums"]["app_role"]
+          used_count?: number
+        }
+        Update: {
+          code_hash?: string
+          created_at?: string
+          created_by?: string | null
+          expires_at?: string | null
+          id?: string
+          label?: string
+          last_used_at?: string | null
+          max_uses?: number
+          revoked?: boolean
+          role?: Database["public"]["Enums"]["app_role"]
+          used_count?: number
+        }
+        Relationships: []
+      }
       user_bans: {
         Row: {
           created_at: string
