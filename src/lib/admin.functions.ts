@@ -12,6 +12,7 @@ export type AdminUser = {
   banned: boolean;
   ban_reason: string | null;
   ban_until: string | null;
+  muted_until: string | null;
 };
 
 // 呼び出し元が管理者かどうかを確認する
@@ -177,10 +178,12 @@ export const adminListUsers = createServerFn({ method: "POST" })
     const ids = rows.map((p) => p.id);
     if (ids.length === 0) return [];
 
-    const [{ data: roles }, { data: bans }] = await Promise.all([
+    const [{ data: roles }, { data: bans }, { data: mutes }] = await Promise.all([
       supabaseAdmin.from("user_roles").select("user_id, role").in("user_id", ids),
       supabaseAdmin.from("user_bans").select("user_id, reason, until").in("user_id", ids),
+      supabaseAdmin.from("user_mutes").select("user_id, until").in("user_id", ids),
     ]);
+    const muteMap = new Map((mutes ?? []).map((m) => [m.user_id, m.until]));
 
     const roleMap = new Map<string, "admin" | "moderator">();
     for (const r of roles ?? []) {
@@ -199,6 +202,10 @@ export const adminListUsers = createServerFn({ method: "POST" })
         banned: active,
         ban_reason: active ? (ban?.reason ?? "") : null,
         ban_until: active ? (ban?.until ?? null) : null,
+        muted_until: (() => {
+          const u = muteMap.get(p.id);
+          return u && new Date(u).getTime() > Date.now() ? u : null;
+        })(),
       };
     });
   });
@@ -628,4 +635,73 @@ export const adminBroadcastToOpenGroups = createServerFn({ method: "POST" })
 
     await supabaseAdmin.from("group_messages").insert(rows);
     return { count: rows.length };
+  });
+
+// 一時ミュート（スタッフ）。minutes=0で解除
+export const adminSetMute = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { userId: string; minutes: number; reason?: string }) => input)
+  .handler(async ({ data, context }) => {
+    const myRole = await assertStaff(context.supabase as never, context.userId);
+    if (data.userId === context.userId) throw new Error("自分はミュートできません");
+    const target = await getStaffRole(context.supabase as never, data.userId);
+    if (target === "admin" || (target === "moderator" && myRole !== "admin"))
+      throw new Error("この相手はミュートできません");
+    const minutes = Math.min(Math.max(Math.floor(data.minutes || 0), 0), 60 * 24 * 7);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const until = new Date(Date.now() + minutes * 60000).toISOString();
+    const { error } = await supabaseAdmin.from("user_mutes").upsert(
+      {
+        user_id: data.userId,
+        until,
+        reason: minutes ? (data.reason ?? "運営による一時ミュート").slice(0, 100) : "",
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id" },
+    );
+    if (error) throw new Error("ミュートの設定に失敗しました");
+    return { ok: true, until: minutes ? until : null };
+  });
+
+export type StaffMember = {
+  user_id: string;
+  role: "admin" | "moderator";
+  display_name: string;
+  friend_code: string;
+  avatar_url: string | null;
+  since: string;
+};
+
+// スタッフ一覧（管理者のみ）
+export const adminListStaff = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }): Promise<StaffMember[]> => {
+    await assertAdmin(context.supabase as never, context.userId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: roles } = await supabaseAdmin
+      .from("user_roles")
+      .select("user_id, role, created_at")
+      .in("role", ["admin", "moderator"]);
+    const ids = [...new Set((roles ?? []).map((r) => r.user_id))];
+    if (ids.length === 0) return [];
+    const { data: profs } = await supabaseAdmin
+      .from("profiles")
+      .select("id, display_name, friend_code, avatar_url")
+      .in("id", ids);
+    const pm = new Map((profs ?? []).map((p) => [p.id, p]));
+    const best = new Map<string, StaffMember>();
+    for (const r of roles ?? []) {
+      const prev = best.get(r.user_id);
+      if (prev && prev.role === "admin") continue;
+      const p = pm.get(r.user_id);
+      best.set(r.user_id, {
+        user_id: r.user_id,
+        role: r.role as "admin" | "moderator",
+        display_name: p?.display_name ?? "（不明）",
+        friend_code: p?.friend_code ?? "",
+        avatar_url: p?.avatar_url ?? null,
+        since: r.created_at,
+      });
+    }
+    return [...best.values()].sort((a, b) => (a.role === b.role ? 0 : a.role === "admin" ? -1 : 1));
   });

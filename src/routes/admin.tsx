@@ -6,7 +6,8 @@ import {
 import { Plus, Gift, Trophy, Crown, Sparkles, UserCheck } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { PasscodeManager } from "@/components/PasscodeManager";
-import { getMyStaffRole } from "@/lib/admin.functions";
+import { getMyStaffRole, adminSetMute } from "@/lib/admin.functions";
+import { StaffList } from "@/components/StaffList";
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import {
@@ -140,6 +141,23 @@ function AdminPage() {
 
   const unlock = useServerFn(unlockAdmin);
   const fetchMyRole = useServerFn(getMyStaffRole);
+  const setMute = useServerFn(adminSetMute);
+  const toggleMute = async (u: AdminUser) => {
+    let minutes = 0;
+    if (!u.muted_until) {
+      const t = prompt("ミュートする時間（分）。例: 10 / 60 / 1440", "10");
+      if (t === null) return;
+      minutes = Number(t);
+      if (!Number.isFinite(minutes) || minutes <= 0) return;
+    } else if (!confirm(`${u.display_name} さんのミュートを解除しますか？`)) return;
+    try {
+      await setMute({ data: { userId: u.id, minutes } });
+      toast.success(minutes ? `${minutes}分ミュートしました` : "ミュートを解除しました");
+      await loadUsers(query);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    }
+  };
   const getStats = useServerFn(adminStats);
   const listUsers = useServerFn(adminListUsers);
   const setBan = useServerFn(adminSetBan);
@@ -460,7 +478,7 @@ function AdminPage() {
               通報 {(stats?.openReports ?? 0) > 0 && `(${stats?.openReports})`}
             </TabsTrigger>
             <TabsTrigger value="groups">オプチャ</TabsTrigger>
-            {isAdmin && <TabsTrigger value="staff">役職パスワード</TabsTrigger>}
+            {isAdmin && <TabsTrigger value="staff">スタッフ</TabsTrigger>}
           </TabsList>
           <p className="text-xs text-muted-foreground">
             あなたの役職: {isAdmin ? "管理者" : "モデレーター"}
@@ -623,6 +641,9 @@ function AdminPage() {
                     <Button variant="outline" size="sm" onClick={() => toggleBan(u)} className="h-7 text-[11px]">
                       {u.banned ? "解除" : "停止"}
                     </Button>
+                    <Button variant="outline" size="sm" onClick={() => void toggleMute(u)} className="h-7 text-[11px]">
+                      {u.muted_until ? "ミュート解除" : "ミュート"}
+                    </Button>
                     {isAdmin && (
                       <>
                         <Button
@@ -697,7 +718,10 @@ function AdminPage() {
           </TabsContent>
           {isAdmin && (
             <TabsContent value="staff" className="pt-2">
-              <PasscodeManager />
+              <div className="space-y-6">
+                <StaffList />
+                <PasscodeManager />
+              </div>
             </TabsContent>
           )}
         </Tabs>
