@@ -5,6 +5,8 @@ import {
 } from "@/lib/admin.functions";
 import { Plus, Gift, Trophy, Crown, Sparkles, UserCheck } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { PasscodeManager } from "@/components/PasscodeManager";
+import { getMyStaffRole } from "@/lib/admin.functions";
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import {
@@ -95,6 +97,8 @@ function errorMessage(e: unknown) {
 function AdminPage() {
   const { user } = useAuth();
   const [allowed, setAllowed] = useState<boolean | null>(null);
+  const [myRole, setMyRole] = useState<"admin" | "moderator" | null>(null);
+  const isAdmin = myRole === "admin";
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -135,6 +139,7 @@ function AdminPage() {
   } | null>(null);
 
   const unlock = useServerFn(unlockAdmin);
+  const fetchMyRole = useServerFn(getMyStaffRole);
   const getStats = useServerFn(adminStats);
   const listUsers = useServerFn(adminListUsers);
   const setBan = useServerFn(adminSetBan);
@@ -210,14 +215,14 @@ function AdminPage() {
     }
   }, [fetchLeaderboard]);
 
-  const refreshAll = useCallback(async () => {
+  const refreshAll = useCallback(async (admin = false) => {
     try {
       const s = await getStats();
       setStats(s);
     } catch {
       // noop
     }
-    await Promise.all([loadReports(), loadUsers(), loadGroups(), loadInvites()]);
+    await Promise.all([loadReports(), loadUsers(), loadGroups(), ...(admin ? [loadInvites()] : [])]);
   }, [getStats, loadReports, loadUsers, loadGroups, loadInvites]);
 
   useEffect(() => {
@@ -225,27 +230,29 @@ function AdminPage() {
       setAllowed(false);
       return;
     }
-    void supabase
-      .rpc("has_role", { _user_id: user.id, _role: "admin" })
-      .then(async ({ data }) => {
-        if (data === true) {
+    void fetchMyRole()
+      .catch(() => null)
+      .then(async (role) => {
+        setMyRole(role);
+        if (role) {
           setAllowed(true);
-          await refreshAll();
+          await refreshAll(role === "admin");
         } else {
           setAllowed(false);
         }
       });
-  }, [user, refreshAll]);
+  }, [user, refreshAll, fetchMyRole]);
 
   const submitPassword = async () => {
     if (!password.trim()) return;
     setBusy(true);
     try {
-      await unlock({ data: { password } });
-      toast.success("管理者として認証されました");
+      const res = await unlock({ data: { password } });
+      toast.success(res.role === "admin" ? "管理者として認証されました" : "モデレーターとして認証されました");
+      setMyRole(res.role);
       setAllowed(true);
       setPassword("");
-      await refreshAll();
+      await refreshAll(res.role === "admin");
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
@@ -386,7 +393,7 @@ function AdminPage() {
         <div className="mx-auto mt-16 max-w-sm space-y-4 px-6 text-center">
           <KeyRound className="mx-auto size-10 text-muted-foreground" />
           <p className="text-sm text-muted-foreground">
-            管理者パスワードを入力すると、このアカウントで管理者パネルを開けます。
+            管理者から受け取ったパスワード（管理者用 ADM- / モデレーター用 MOD-）を入力すると、このアカウントで管理者パネルを開けます。
           </p>
           <div className="space-y-2 text-left">
             <Label htmlFor="admin-password">管理者パスワード</Label>
@@ -434,7 +441,7 @@ function AdminPage() {
             >
               <RefreshCw className="size-3.5" /> 全員の画面を再読み込み
             </Button>
-            <Button variant="outline" size="sm" onClick={() => void refreshAll()} className="gap-1 text-xs">
+            <Button variant="outline" size="sm" onClick={() => void refreshAll(isAdmin)} className="gap-1 text-xs">
               <RefreshCw className="size-3.5" /> 最新に更新
             </Button>
           </div>
@@ -443,15 +450,22 @@ function AdminPage() {
         <Tabs defaultValue="overview" className="space-y-4">
           <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1 overflow-x-auto [&>button]:flex-1 [&>button]:min-w-[90px] [&>button]:whitespace-nowrap">
             <TabsTrigger value="overview">概要</TabsTrigger>
-            <TabsTrigger value="invites" className="gap-1">
-              <Gift className="size-3.5 text-primary" /> 招待・ランク
-            </TabsTrigger>
+            {isAdmin && (
+              <TabsTrigger value="invites" className="gap-1">
+                <Gift className="size-3.5 text-primary" /> 招待・ランク
+              </TabsTrigger>
+            )}
             <TabsTrigger value="users">ユーザー</TabsTrigger>
             <TabsTrigger value="reports">
               通報 {(stats?.openReports ?? 0) > 0 && `(${stats?.openReports})`}
             </TabsTrigger>
             <TabsTrigger value="groups">オプチャ</TabsTrigger>
+            {isAdmin && <TabsTrigger value="staff">役職パスワード</TabsTrigger>}
           </TabsList>
+          <p className="text-xs text-muted-foreground">
+            あなたの役職: {isAdmin ? "管理者" : "モデレーター"}
+            {!isAdmin && "（通報対応・ユーザー停止・メッセージ削除・オプチャ管理ができます）"}
+          </p>
 
           {/* 概要タブ */}
           <TabsContent value="overview" className="space-y-6 pt-2">
@@ -477,7 +491,7 @@ function AdminPage() {
             </div>
 
             {/* アナウンス送信カード */}
-            <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-3">
+            {isAdmin && <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Megaphone className="size-5 text-primary" />
@@ -502,7 +516,7 @@ function AdminPage() {
               <Button onClick={handleSendAnnouncement} disabled={sendingAnnounce} size="sm" className="w-full text-xs font-bold">
                 アナウンスを配信する
               </Button>
-            </div>
+            </div>}
           </TabsContent>
 
           {/* 招待・ランクタブ */}
@@ -609,14 +623,26 @@ function AdminPage() {
                     <Button variant="outline" size="sm" onClick={() => toggleBan(u)} className="h-7 text-[11px]">
                       {u.banned ? "解除" : "停止"}
                     </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => changeRole(u, u.role === "admin" ? null : "admin")}
-                      className="h-7 text-[11px]"
-                    >
-                      {u.role === "admin" ? "管理者解除" : "管理者に"}
-                    </Button>
+                    {isAdmin && (
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => changeRole(u, u.role === "moderator" ? null : "moderator")}
+                          className="h-7 text-[11px]"
+                        >
+                          {u.role === "moderator" ? "モデ解除" : "モデに"}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => changeRole(u, u.role === "admin" ? null : "admin")}
+                          className="h-7 text-[11px]"
+                        >
+                          {u.role === "admin" ? "管理者解除" : "管理者に"}
+                        </Button>
+                      </>
+                    )}
                   </div>
                 </div>
               ))}
@@ -660,13 +686,20 @@ function AdminPage() {
                   <Button variant="outline" size="sm" onClick={() => hideGroup(g)} className="h-7 text-[11px]">
                     {g.is_open ? "非公開" : "公開"}
                   </Button>
-                  <Button variant="destructive" size="sm" onClick={() => deleteGroup(g)} className="h-7 text-[11px]">
-                    削除
-                  </Button>
+                  {isAdmin && (
+                    <Button variant="destructive" size="sm" onClick={() => deleteGroup(g)} className="h-7 text-[11px]">
+                      削除
+                    </Button>
+                  )}
                 </div>
               </div>
             ))}
           </TabsContent>
+          {isAdmin && (
+            <TabsContent value="staff" className="pt-2">
+              <PasscodeManager />
+            </TabsContent>
+          )}
         </Tabs>
       </div>
     </AppShell>
