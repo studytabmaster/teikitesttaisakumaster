@@ -441,7 +441,7 @@ function AdminPage() {
             >
               <RefreshCw className="size-3.5" /> 全員の画面を再読み込み
             </Button>
-            <Button variant="outline" size="sm" onClick={() => void refreshAll()} className="gap-1 text-xs">
+            <Button variant="outline" size="sm" onClick={() => void refreshAll(isAdmin)} className="gap-1 text-xs">
               <RefreshCw className="size-3.5" /> 最新に更新
             </Button>
           </div>
