@@ -705,3 +705,63 @@ export const adminListStaff = createServerFn({ method: "GET" })
     }
     return [...best.values()].sort((a, b) => (a.role === b.role ? 0 : a.role === "admin" ? -1 : 1));
   });
+
+export type AdminReport = {
+  id: string;
+  reporter_id: string;
+  reported_id: string;
+  reason: string;
+  detail: string;
+  reported_code: string | null;
+  context: string;
+  group_id: string | null;
+  status: string;
+  created_at: string;
+  reporter_name: string;
+  reported_name: string;
+  reported_friend_code: string;
+  reported_report_count: number;
+};
+
+// 通報一覧（スタッフ全員）
+export const adminListReports = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { status?: string }) => input)
+  .handler(async ({ data, context }): Promise<AdminReport[]> => {
+    await assertStaff(context.supabase as never, context.userId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    let q = supabaseAdmin.from("reports").select("*").order("created_at", { ascending: false }).limit(200);
+    if (data.status && data.status !== "all") q = q.eq("status", data.status);
+    const { data: rows, error } = await q;
+    if (error) throw new Error("通報を読み込めませんでした");
+    const list = rows ?? [];
+    const ids = Array.from(new Set(list.flatMap((r) => [r.reporter_id, r.reported_id])));
+    const { data: profs } = ids.length
+      ? await supabaseAdmin.from("profiles").select("id, display_name, friend_code").in("id", ids)
+      : { data: [] as { id: string; display_name: string; friend_code: string }[] };
+    const pm = new Map((profs ?? []).map((p) => [p.id, p]));
+    const counts = new Map<string, number>();
+    for (const r of list) counts.set(r.reported_id, (counts.get(r.reported_id) ?? 0) + 1);
+    return list.map((r) => ({
+      ...(r as unknown as AdminReport),
+      reporter_name: pm.get(r.reporter_id)?.display_name ?? "不明",
+      reported_name: pm.get(r.reported_id)?.display_name ?? "不明",
+      reported_friend_code: pm.get(r.reported_id)?.friend_code ?? "",
+      reported_report_count: counts.get(r.reported_id) ?? 1,
+    }));
+  });
+
+// 通報の対応状況を変更（スタッフ全員）
+export const adminUpdateReport = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { ids: string[]; status: "open" | "reviewing" | "resolved" }) => input)
+  .handler(async ({ data, context }) => {
+    await assertStaff(context.supabase as never, context.userId);
+    if (!["open", "reviewing", "resolved"].includes(data.status)) throw new Error("不正な状態です");
+    const ids = data.ids.slice(0, 200);
+    if (!ids.length) return { ok: true };
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { error } = await supabaseAdmin.from("reports").update({ status: data.status }).in("id", ids);
+    if (error) throw new Error("更新できませんでした");
+    return { ok: true };
+  });
