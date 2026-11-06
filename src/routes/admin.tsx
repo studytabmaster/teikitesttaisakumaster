@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from "react";
 import { PasscodeManager } from "@/components/PasscodeManager";
 import { getMyStaffRole, adminSetMute } from "@/lib/admin.functions";
 import { StaffList } from "@/components/StaffList";
+import { ReportsPanel } from "@/components/ReportsPanel";
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import {
@@ -672,27 +673,7 @@ function AdminPage() {
 
           {/* 通報タブ */}
           <TabsContent value="reports" className="space-y-3 pt-2">
-            {reports.length === 0 ? (
-              <p className="text-xs text-muted-foreground text-center py-8">通報はありません</p>
-            ) : (
-              reports.map((r) => (
-                <div key={r.id} className="p-3 rounded-xl border bg-card text-xs space-y-2">
-                  <div className="flex justify-between items-center">
-                    <Badge variant={r.status === "open" ? "destructive" : "secondary"}>
-                      {STATUS_LABEL[r.status] || r.status}
-                    </Badge>
-                    <span className="text-[10px] text-muted-foreground">{new Date(r.created_at).toLocaleString()}</span>
-                  </div>
-                  <p><strong>理由:</strong> {r.reason}</p>
-                  <p className="text-muted-foreground">{r.detail}</p>
-                  <div className="flex gap-1.5 pt-1">
-                    <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => updateReportStatus(r.id, "resolved")}>
-                      対応済みにする
-                    </Button>
-                  </div>
-                </div>
-              ))
-            )}
+            <ReportsPanel onChanged={() => void refreshAll(isAdmin)} />
           </TabsContent>
 
           {/* オプチャタブ */}
