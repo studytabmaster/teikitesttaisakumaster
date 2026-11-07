@@ -51,6 +51,7 @@ type OpenRoom = {
   requires_approval: boolean;
   is_adult?: boolean;
   created_at: string;
+  last_activity_at?: string;
 };
 
 type JoinRequest = {
@@ -72,7 +73,7 @@ function OpenChatPage() {
   const { user } = useAuth();
   const [tab, setTab] = useState<Tab>("discover");
   const [query, setQuery] = useState("");
-  const [sort, setSort] = useState<"new" | "popular">("new");
+  const [sort, setSort] = useState<"active" | "new" | "popular" | "hidden">("active");
   const [rooms, setRooms] = useState<OpenRoom[]>([]);
   const [memberIds, setMemberIds] = useState<string[]>([]);
   const [myRequests, setMyRequests] = useState<JoinRequest[]>([]);
@@ -185,14 +186,14 @@ function OpenChatPage() {
     const [{ data: openRooms }, { data: myJoinedRooms }, { data: reqs }] = await Promise.all([
       supabase
         .from("groups")
-        .select("id,name,description,avatar_url,owner_id,requires_approval,is_adult,created_at")
+        .select("id,name,description,avatar_url,owner_id,requires_approval,is_adult,created_at,last_activity_at")
         .eq("is_open", true)
-        .order("created_at", { ascending: false })
-        .limit(1000),
+        .order("last_activity_at", { ascending: false })
+        .limit(300),
       joinedIds.length > 0
         ? supabase
             .from("groups")
-            .select("id,name,description,avatar_url,owner_id,requires_approval,is_adult,created_at")
+            .select("id,name,description,avatar_url,owner_id,requires_approval,is_adult,created_at,last_activity_at")
             .in("id", joinedIds)
             .eq("is_open", true)
         : Promise.resolve({ data: [] }),
@@ -240,8 +241,20 @@ function OpenChatPage() {
       : base;
     const byNew = (a: OpenRoom, b: OpenRoom) =>
       new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    const act = (r: OpenRoom) => new Date(r.last_activity_at ?? r.created_at).getTime();
+    if (sort === "hidden") {
+      // 埋もれルーム発掘: 人数が少ない順→ランダム
+      return [...hit]
+        .filter((r) => (counts[r.id] ?? 0) <= 5)
+        .sort(() => Math.random() - 0.5)
+        .slice(0, 30);
+    }
     return [...hit].sort((a, b) =>
-      sort === "popular" ? (counts[b.id] ?? 0) - (counts[a.id] ?? 0) || byNew(a, b) : byNew(a, b),
+      sort === "popular"
+        ? (counts[b.id] ?? 0) - (counts[a.id] ?? 0) || act(b) - act(a)
+        : sort === "active"
+          ? act(b) - act(a)
+          : byNew(a, b),
     );
   }, [rooms, memberIds, query, pinkMode, isAdult, sort, counts]);
 
@@ -474,11 +487,13 @@ function OpenChatPage() {
               className="rounded-full pl-9"
             />
           </div>
-          <div className="mx-4 mb-2 flex gap-2">
+          <div className="mx-4 mb-2 flex flex-wrap gap-2">
             {(
               [
+                ["active", "🔥 活発順"],
                 ["new", "新着順"],
                 ["popular", "人気順"],
+                ["hidden", "🎲 埋もれ発掘"],
               ] as const
             ).map(([key, label]) => (
               <button

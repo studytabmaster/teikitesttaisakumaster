@@ -307,6 +307,7 @@ export type Database = {
           id: string
           is_adult: boolean
           is_open: boolean
+          last_activity_at: string
           name: string
           owner_id: string
           requires_approval: boolean
@@ -319,6 +320,7 @@ export type Database = {
           id?: string
           is_adult?: boolean
           is_open?: boolean
+          last_activity_at?: string
           name?: string
           owner_id: string
           requires_approval?: boolean
@@ -331,6 +333,7 @@ export type Database = {
           id?: string
           is_adult?: boolean
           is_open?: boolean
+          last_activity_at?: string
           name?: string
           owner_id?: string
           requires_approval?: boolean
