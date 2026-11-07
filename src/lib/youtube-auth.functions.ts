@@ -4,8 +4,8 @@ import { z } from "zod";
 const SCOPE = "https://www.googleapis.com/auth/youtube.readonly openid profile";
 
 function creds() {
-  const id = process.env.GOOGLE_OAUTH_CLIENT_ID;
-  const secret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+  const id = process.env["GOOGLE_OAUTH_CLIENT_ID"];
+  const secret = process.env["GOOGLE_OAUTH_CLIENT_SECRET"];
   if (!id || !secret) throw new Error("Google OAuth not configured");
   return { id, secret };
 }
