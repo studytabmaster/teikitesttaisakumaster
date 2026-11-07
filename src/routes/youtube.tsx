@@ -39,7 +39,24 @@ export const Route = createFileRoute("/youtube")({
   component: RINETubePage,
 });
 
-type PlayMode = "invidious" | "education" | "nocookie" | "custom";
+type PlayMode = "invidious" | "education" | "nocookie" | "youtube" | "piped" | "custom";
+
+const PLAY_MODES: { id: PlayMode; name: string; desc: string }[] = [
+  { id: "nocookie", name: "No-Cookie", desc: "高画質・安全" },
+  { id: "education", name: "Education", desc: "教育モード・低制限" },
+  { id: "invidious", name: "Invidious", desc: "プロキシ経由" },
+  { id: "piped", name: "Piped", desc: "別プロキシ" },
+  { id: "youtube", name: "標準", desc: "通常の埋め込み" },
+  { id: "custom", name: "カスタム", desc: "自前サーバー" },
+];
+
+const FALLBACK_HOSTS = [
+  "https://invidious.f5.si",
+  "https://inv.nadeko.net",
+  "https://yewtu.be",
+  "https://invidious.nerdvpn.de",
+  "https://iv.melmac.space",
+];
 
 interface VideoItem {
   id: string;
@@ -270,13 +287,26 @@ export default function RINETubePage() {
     if (!keyword.trim()) return;
     setLoading(true);
     try {
-      const cleanHost = invidiousHost.replace(/\/+$/, "");
-      const res = await fetch(
-        `${cleanHost}/api/v1/search?q=${encodeURIComponent(keyword)}&type=video&sort_by=relevance`,
-        { signal: AbortSignal.timeout(6000) }
-      );
-      if (!res.ok) throw new Error("Search failed");
-      const data = await res.json();
+      const hosts = [invidiousHost.replace(/\/+$/, ""), ...FALLBACK_HOSTS.filter((h) => h !== invidiousHost.replace(/\/+$/, ""))];
+      let data: any = null;
+      for (const host of hosts) {
+        try {
+          const res = await fetch(
+            `${host}/api/v1/search?q=${encodeURIComponent(keyword)}&type=video&sort_by=relevance`,
+            { signal: AbortSignal.timeout(5000) }
+          );
+          if (!res.ok) continue;
+          data = await res.json();
+          if (host !== hosts[0]) {
+            setInvidiousHost(host);
+            toast.info(`別の検索サーバーに自動で切り替えました`);
+          }
+          break;
+        } catch {
+          /* 次のサーバーへ */
+        }
+      }
+      if (!data) throw new Error("all failed");
       if (Array.isArray(data) && data.length > 0) {
         const formatted: VideoItem[] = data.slice(0, 30).map((item: any) => ({
           id: item.videoId,
@@ -344,6 +374,10 @@ export default function RINETubePage() {
         return `https://www.youtube-nocookie.com/embed/${id}?autoplay=${ap}&rel=0&modestbranding=1&iv_load_policy=3`;
       case "nocookie":
         return `https://www.youtube-nocookie.com/embed/${id}?autoplay=${ap}&rel=0`;
+      case "youtube":
+        return `https://www.youtube.com/embed/${id}?autoplay=${ap}&rel=0`;
+      case "piped":
+        return `https://piped.video/embed/${id}?autoplay=${ap}`;
       case "custom":
         if (customProxyUrl) {
           return `${customProxyUrl.replace(/\/+$/, "")}/embed/${id}?autoplay=${ap}`;
@@ -551,6 +585,22 @@ export default function RINETubePage() {
           {/* 動画再生画面（Watch View） */}
           {currentVideoId && (
             <div className="space-y-4 bg-[#181818] rounded-2xl p-3 sm:p-5 border border-[#272727] shadow-2xl">
+              <div className="flex gap-1.5 overflow-x-auto scrollbar-none">
+                <span className="text-[11px] text-[#aaa] self-center shrink-0">再生方法:</span>
+                {PLAY_MODES.map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setMode(m.id)}
+                    title={m.desc}
+                    className={`px-2.5 py-1 rounded-full text-[11px] font-semibold whitespace-nowrap ${
+                      mode === m.id ? "bg-red-600 text-white" : "bg-[#272727] text-[#ddd] hover:bg-[#383838]"
+                    }`}
+                  >
+                    {m.name}
+                  </button>
+                ))}
+              </div>
               <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black shadow-lg">
                 <iframe
                   key={`${currentVideoId}-${mode}`}
@@ -951,12 +1001,7 @@ export default function RINETubePage() {
               <div>
                 <label className="font-bold text-[#f1f1f1] block mb-1.5">再生方式</label>
                 <div className="grid grid-cols-2 gap-2">
-                  {[
-                    { id: "invidious", name: "Invidious", desc: "高速・標準プロキシ" },
-                    { id: "education", name: "Education", desc: "YouTube教育・低制限" },
-                    { id: "nocookie", name: "No-Cookie", desc: "高画質・安全" },
-                    { id: "custom", name: "カスタムProxy", desc: "自前サーバー" },
-                  ].map((m) => (
+                  {PLAY_MODES.map((m) => (
                     <button
                       key={m.id}
                       type="button"
