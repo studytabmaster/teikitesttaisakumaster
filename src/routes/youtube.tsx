@@ -417,16 +417,53 @@ export default function RINETubePage() {
             ? `${Math.floor(item.lengthSeconds / 60)}:${String(item.lengthSeconds % 60).padStart(2, "0")}`
             : undefined,
         }));
-        setVideos(formatted);
+        setHasMore(true);
+        setVideos((prev) => {
+          const base = append ? prev : [];
+          const seen = new Set(base.map((v) => v.id));
+          return [...base, ...formatted.filter((v) => v.id && !seen.has(v.id) && seen.add(v.id))];
+        });
       } else {
-        toast.info("該当する動画が見つかりませんでした");
+        setHasMore(false);
+        if (!append) toast.info("該当する動画が見つかりませんでした");
       }
     } catch {
-      toast.error("検索サーバーに接続できませんでした。別サーバーをお試しください。");
+      if (!append) toast.error("検索サーバーに接続できませんでした。別サーバーをお試しください。");
+      else setHasMore(false);
     } finally {
       setLoading(false);
+      if (append) {
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+      }
     }
   };
+
+  // 画面の一番下に来たら続きを自動で読み込む
+  const loadMoreRef = useRef<() => void>(() => {});
+  loadMoreRef.current = () => {
+    if (loadingMoreRef.current || loading || !hasMore) return;
+    if (feedModeRef.current === "subs") loadSubsFeed(false);
+    else searchVideos(lastQueryRef.current, pageRef.current + 1, true);
+  };
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) loadMoreRef.current();
+      },
+      { rootMargin: "600px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
+  // ログイン済みなら登録チャンネルのおすすめを最初に表示
+  useEffect(() => {
+    if (account?.access_token && feedModeRef.current === "search" && pageRef.current === 0) loadSubsFeed(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [account?.access_token]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -812,6 +849,22 @@ export default function RINETubePage() {
                   </div>
                 );
               })}
+            </div>
+            <div ref={sentinelRef} className="h-10" />
+            <div className="flex justify-center py-4">
+              {loadingMore ? (
+                <Loader2 className="size-6 animate-spin text-red-500" />
+              ) : hasMore ? (
+                <button
+                  type="button"
+                  onClick={() => loadMoreRef.current()}
+                  className="px-4 py-2 rounded-full bg-[#272727] text-white text-xs font-semibold hover:bg-[#383838]"
+                >
+                  もっと見る
+                </button>
+              ) : (
+                <span className="text-xs text-[#717171]">これ以上ありません</span>
+              )}
             </div>
           </div>
         </main>
