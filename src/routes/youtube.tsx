@@ -28,6 +28,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { ytDeviceStart, ytDevicePoll, ytRefresh, ytSubsFeed } from "@/lib/youtube-auth.functions";
 
 export const Route = createFileRoute("/youtube")({
   head: () => ({
@@ -72,6 +73,9 @@ interface YouTubeAccount {
   handle: string;
   avatar: string;
   loggedInAt: number;
+  access_token?: string;
+  refresh_token?: string;
+  expires_at?: number;
 }
 
 const CATEGORIES = [
@@ -177,7 +181,17 @@ export default function RINETubePage() {
   const [verificationUrl, setVerificationUrl] = useState("https://www.youtube.com/activate");
   const [authError, setAuthError] = useState("");
   const [codeCopied, setCodeCopied] = useState(false);
-  const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 無限スクロール
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const loadingMoreRef = useRef(false);
+  const feedModeRef = useRef<"search" | "subs">("search");
+  const lastQueryRef = useRef("おすすめ");
+  const pageRef = useRef(0);
+  const subsTokenRef = useRef<string | null>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   // 設定・履歴・アカウントの初期読み込み
   useEffect(() => {
@@ -361,16 +375,23 @@ export default function RINETubePage() {
   };
 
   // 動画検索（Invidious経由）
-  const searchVideos = async (keyword: string) => {
+  const searchVideos = async (keyword: string, page = 1, append = false) => {
     if (!keyword.trim()) return;
-    setLoading(true);
+    if (append) {
+      if (loadingMoreRef.current) return;
+      loadingMoreRef.current = true;
+      setLoadingMore(true);
+    } else setLoading(true);
+    feedModeRef.current = "search";
+    lastQueryRef.current = keyword;
+    pageRef.current = page;
     try {
       const hosts = [invidiousHost.replace(/\/+$/, ""), ...FALLBACK_HOSTS.filter((h) => h !== invidiousHost.replace(/\/+$/, ""))];
       let data: any = null;
       for (const host of hosts) {
         try {
           const res = await fetch(
-            `${host}/api/v1/search?q=${encodeURIComponent(keyword)}&type=video&sort_by=relevance`,
+            `${host}/api/v1/search?q=${encodeURIComponent(keyword)}&type=video&sort_by=relevance&page=${page}`,
             { signal: AbortSignal.timeout(5000) }
           );
           if (!res.ok) continue;
