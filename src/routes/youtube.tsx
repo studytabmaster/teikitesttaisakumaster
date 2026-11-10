@@ -29,6 +29,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { ytDeviceStart, ytDevicePoll, ytRefresh, ytSubsFeed } from "@/lib/youtube-auth.functions";
+import { ytSearch } from "@/lib/youtube-search.functions";
 
 export const Route = createFileRoute("/youtube")({
   head: () => ({
@@ -191,6 +192,7 @@ export default function RINETubePage() {
   const lastQueryRef = useRef("おすすめ");
   const pageRef = useRef(0);
   const subsTokenRef = useRef<string | null>(null);
+  const searchContRef = useRef<string | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   // 設定・履歴・アカウントの初期読み込み
@@ -384,7 +386,26 @@ export default function RINETubePage() {
     feedModeRef.current = "search";
     lastQueryRef.current = keyword;
     pageRef.current = page;
+    if (!append) searchContRef.current = null;
     try {
+      // まずはサーバー経由の高速検索（安定・続きの読み込み対応）
+      try {
+        const r = await ytSearch({
+          data: append && searchContRef.current ? { continuation: searchContRef.current } : { q: keyword },
+        });
+        if (r.items.length > 0) {
+          searchContRef.current = r.continuation;
+          setHasMore(!!r.continuation);
+          setVideos((prev) => {
+            const base = append ? prev : [];
+            const seen = new Set(base.map((v) => v.id));
+            return [...base, ...r.items.filter((v) => !seen.has(v.id) && seen.add(v.id))];
+          });
+          return;
+        }
+      } catch {
+        /* 予備のInvidiousへ */
+      }
       const hosts = [invidiousHost.replace(/\/+$/, ""), ...FALLBACK_HOSTS.filter((h) => h !== invidiousHost.replace(/\/+$/, ""))];
       let data: any = null;
       for (const host of hosts) {
