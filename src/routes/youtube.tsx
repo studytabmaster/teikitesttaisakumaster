@@ -253,9 +253,9 @@ export default function RINETubePage() {
     if (!acc.refresh_token) return null;
     try {
       const r = await ytRefresh({ data: { refresh_token: acc.refresh_token } });
-      if (!("access_token" in r)) return null;
+      if (!("access_token" in r) || !r.access_token) return null;
       saveAccount({ ...acc, access_token: r.access_token, expires_at: r.expires_at });
-      return r.access_token;
+      return r.access_token ?? null;
     } catch {
       return null;
     }
