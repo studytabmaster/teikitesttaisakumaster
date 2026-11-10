@@ -367,8 +367,7 @@ export default function RINETubePage() {
 
   const signOut = () => {
     if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
-    setAccount(null);
-    localStorage.removeItem("rinetube_account_v1");
+    saveAccount(null);
     setAuthStatus("signed_out");
     setUserCode("");
     toast.success("ログアウトしました");
@@ -699,6 +698,17 @@ export default function RINETubePage() {
         <main className="flex-1 p-3 sm:p-5 max-w-7xl mx-auto w-full space-y-6">
           {/* カテゴリピル（チップバー） */}
           <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none">
+            {account?.access_token && (
+              <button
+                type="button"
+                onClick={() => loadSubsFeed(true)}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
+                  selectedCategory === "subs" ? "bg-red-600 text-white" : "bg-[#272727] text-white hover:bg-[#383838]"
+                }`}
+              >
+                登録チャンネル
+              </button>
+            )}
             {CATEGORIES.map((cat) => (
               <button
                 key={cat.id}
@@ -789,7 +799,9 @@ export default function RINETubePage() {
           <div>
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-base font-bold text-white flex items-center gap-2">
-                <span>{selectedCategory === "all" ? "おすすめ動画" : "検索結果"}</span>
+                <span>
+                  {selectedCategory === "subs" ? "登録チャンネルの新着" : selectedCategory === "all" ? "おすすめ動画" : "検索結果"}
+                </span>
                 {loading && <Loader2 className="size-4 animate-spin text-red-500" />}
               </h2>
               <span className="text-xs text-[#888]">{videos.length}件</span>
@@ -910,6 +922,9 @@ export default function RINETubePage() {
                   テレビ認証を使ってログインすると、あなたのアカウントの再生履歴、登録チャンネル、おすすめを同期できます。
                 </p>
 
+                {authError && (
+                  <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg p-2">{authError}</p>
+                )}
                 <div className="pt-2">
                   <Button
                     onClick={startTvAuth}
