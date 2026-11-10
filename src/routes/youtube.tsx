@@ -366,7 +366,7 @@ export default function RINETubePage() {
   };
 
   const signOut = () => {
-    if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+    if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
     setAccount(null);
     localStorage.removeItem("rinetube_account_v1");
     setAuthStatus("signed_out");
@@ -885,7 +885,7 @@ export default function RINETubePage() {
               type="button"
               onClick={() => {
                 setTvAuthOpen(false);
-                if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+                if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
               }}
               className="absolute top-4 right-4 text-[#aaa] hover:text-white p-1 rounded-full hover:bg-[#333]"
               aria-label="閉じる"
@@ -963,7 +963,7 @@ export default function RINETubePage() {
                   rel="noopener noreferrer"
                   className="w-full flex items-center justify-center gap-2 py-3 bg-[#2a2a2a] hover:bg-[#333] border border-[#444] rounded-xl text-white font-bold text-sm transition-colors group"
                 >
-                  <span>認証ページを開く (youtube.com/activate)</span>
+                  <span>認証ページを開く ({verificationUrl.replace(/^https?:\/\//, "")})</span>
                   <ExternalLink className="size-4 text-[#aaa] group-hover:text-white" />
                 </a>
 
