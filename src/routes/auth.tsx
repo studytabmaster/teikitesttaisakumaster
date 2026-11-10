@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { lovable } from "@/integrations/lovable/index";
@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { isValidUsername, normalizeUsername, usernameToEmail } from "@/lib/username";
 import { cn } from "@/lib/utils";
-import { Tv, Smartphone, RefreshCw, KeyRound, CheckCircle2, Gift } from "lucide-react";
+import { Tv, Smartphone, RefreshCw, Gift, LogIn, UserPlus } from "lucide-react";
 
 export const Route = createFileRoute("/auth")({
   head: () => ({
@@ -160,11 +160,15 @@ function AuthPage() {
       toast.error("名前は2〜20文字で、記号や空白は使えません");
       return;
     }
+    if (password.length < 6) {
+      toast.error("パスワードは6文字以上で入力してください");
+      return;
+    }
     setBusy(true);
     try {
       const email = usernameToEmail(name);
       if (mode === "signup") {
-        const { error, data: authData } = await supabase.auth.signUp({
+        const { error } = await supabase.auth.signUp({
           email,
           password,
           options: {
@@ -174,6 +178,9 @@ function AuthPage() {
         if (error) {
           if (/already|registered|duplicate|unique/i.test(error.message)) {
             throw new Error("この名前はすでに使われています。別の名前にしてください");
+          }
+          if (/weak_password|pwned|easy/i.test(error.message)) {
+            throw new Error("推測されにくい別のパスワードにしてください");
           }
           throw error;
         }
@@ -272,56 +279,70 @@ function AuthPage() {
 
         {/* 通常ログイン / 新規登録フォーム */}
         {mode !== "tv" ? (
-          <>
-            <form onSubmit={submit} className="space-y-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="name">名前</Label>
-                <Input
-                  id="name"
-                  required
-                  autoComplete="username"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="たろう"
-                />
-                <p className="text-[11px] text-muted-foreground">
-                  2〜20文字。空白・記号は使えません。
-                </p>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="password">パスワード</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  required
-                  minLength={6}
-                  autoComplete={mode === "signup" ? "new-password" : "current-password"}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="6文字以上"
-                />
-              </div>
+          <form onSubmit={submit} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="name">名前（ニックネーム）</Label>
+              <Input
+                id="name"
+                required
+                autoComplete="username"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="例: たろう"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                2〜20文字。空白・記号は使えません。
+              </p>
+            </div>
 
-              {/* 新規登録時のみ表示される招待コード入力欄 */}
-              {mode === "signup" && (
-                <div className="space-y-1.5 rounded-xl border border-dashed border-primary/40 bg-primary/5 p-3">
-                  <div className="flex items-center justify-between">
-                    <Label htmlFor="invite" className="text-xs font-bold flex items-center gap-1">
-                      <Gift className="size-3.5 text-primary" />
-                      招待コード（任意）
-                    </Label>
-                    <span className="text-[10px] text-muted-foreground">特典付き</span>
-                  </div>
-                                   <Input
-                    id="invite"
-                    value={inviteCode}
-                    onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
-                    placeholder="友だちのID (例:TAROU123)"
-                  />
+            <div className="space-y-1.5">
+              <Label htmlFor="password">パスワード</Label>
+              <Input
+                id="password"
+                type="password"
+                required
+                minLength={6}
+                autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="6文字以上"
+              />
+            </div>
+
+            {/* 新規登録時のみ表示される招待コード入力欄 */}
+            {mode === "signup" && (
+              <div className="space-y-1.5 rounded-xl border border-dashed border-primary/40 bg-primary/5 p-3">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="invite" className="text-xs font-bold flex items-center gap-1">
+                    <Gift className="size-3.5 text-primary" />
+                    招待コード（任意）
+                  </Label>
+                  <span className="text-[10px] text-muted-foreground">特典付き</span>
                 </div>
+                <Input
+                  id="invite"
+                  value={inviteCode}
+                  onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
+                  placeholder="友だちのID (例:TAROU123)"
+                />
+              </div>
+            )}
+
+            {/* メインの送信ボタン（Googleに行かず名前とパスワードで即登録・ログイン） */}
+            <Button type="submit" className="w-full font-bold mt-2" disabled={busy}>
+              {mode === "signup" ? (
+                <>
+                  <UserPlus className="mr-2 size-4" />
+                  {busy ? "登録中..." : "名前とパスワードで登録する"}
+                </>
+              ) : (
+                <>
+                  <LogIn className="mr-2 size-4" />
+                  {busy ? "ログイン中..." : "ログインする"}
+                </>
               )}
-            </form>
-          </>
+            </Button>
+          </form>
         ) : (
           <div className="space-y-4">
             <div className="text-center">
@@ -355,7 +376,7 @@ function AuthPage() {
           </div>
         )}
 
-        <div className="mt-4 space-y-3">
+        <div className="mt-5 space-y-3">
           {mode === "tv" && tvRole === "display" && (
             <div className="rounded-xl bg-muted p-4 text-center">
               <p className="text-sm text-muted-foreground">
@@ -382,21 +403,25 @@ function AuthPage() {
 
           {mode !== "tv" && (
             <>
-              <Button type="submit" form="auth-form" className="hidden" />
+              <div className="relative my-3 text-center text-xs after:absolute after:inset-0 after:top-1/2 after:z-0 after:flex after:items-center after:border-t after:border-border">
+                <span className="relative z-10 bg-card px-2 text-muted-foreground">
+                  または
+                </span>
+              </div>
               <Button
                 type="button"
                 variant="outline"
-                className="w-full"
+                className="w-full text-xs text-muted-foreground hover:text-foreground"
                 onClick={google}
               >
-                Googleでログイン
+                Google アカウントで続ける
               </Button>
             </>
           )}
         </div>
 
         <p className="mt-5 text-center text-xs text-muted-foreground">
-          ログインに問題がある場合は、入力した名前とパスワードを確認してください。
+          登録した名前とパスワードは忘れないよう大切に控えておいてください。
         </p>
       </div>
     </div>
