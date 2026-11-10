@@ -28,6 +28,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { ytDeviceStart, ytDevicePoll, ytRefresh, ytSubsFeed } from "@/lib/youtube-auth.functions";
+import { ytSearch } from "@/lib/youtube-search.functions";
 
 export const Route = createFileRoute("/youtube")({
   head: () => ({
@@ -72,6 +74,9 @@ interface YouTubeAccount {
   handle: string;
   avatar: string;
   loggedInAt: number;
+  access_token?: string;
+  refresh_token?: string;
+  expires_at?: number;
 }
 
 const CATEGORIES = [
@@ -177,7 +182,18 @@ export default function RINETubePage() {
   const [verificationUrl, setVerificationUrl] = useState("https://www.youtube.com/activate");
   const [authError, setAuthError] = useState("");
   const [codeCopied, setCodeCopied] = useState(false);
-  const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 無限スクロール
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const loadingMoreRef = useRef(false);
+  const feedModeRef = useRef<"search" | "subs">("search");
+  const lastQueryRef = useRef("おすすめ");
+  const pageRef = useRef(0);
+  const subsTokenRef = useRef<string | null>(null);
+  const searchContRef = useRef<string | null>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   // 設定・履歴・アカウントの初期読み込み
   useEffect(() => {
@@ -219,46 +235,124 @@ export default function RINETubePage() {
     toast.success("設定を保存しました");
   };
 
-  // WeTube方式：テレビ認証の開始
-  const startTvAuth = () => {
-    if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+  const accountRef = useRef<YouTubeAccount | null>(null);
+  useEffect(() => {
+    accountRef.current = account;
+  }, [account]);
+
+  const saveAccount = (a: YouTubeAccount | null) => {
+    accountRef.current = a;
+    setAccount(a);
+    if (a) localStorage.setItem("rinetube_account_v1", JSON.stringify(a));
+    else localStorage.removeItem("rinetube_account_v1");
+  };
+
+  // 有効なアクセストークンを取得（期限切れなら自動更新）
+  const getToken = async (): Promise<string | null> => {
+    const acc = accountRef.current;
+    if (!acc?.access_token) return null;
+    if (acc.expires_at && acc.expires_at - 60_000 > Date.now()) return acc.access_token;
+    if (!acc.refresh_token) return null;
+    try {
+      const r = await ytRefresh({ data: { refresh_token: acc.refresh_token } });
+      if (!("access_token" in r) || !r.access_token) return null;
+      saveAccount({ ...acc, access_token: r.access_token, expires_at: r.expires_at });
+      return r.access_token ?? null;
+    } catch {
+      return null;
+    }
+  };
+
+  // 本物のテレビ認証（Google デバイスコード方式）
+  const startTvAuth = async () => {
+    if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
     setAuthStatus("starting");
     setAuthError("");
     setCodeCopied(false);
-
-    // ランダムな8桁のコード生成（WeTube TV OAuth形式: XXXX-XXXX）
-    const chars = "BCDFGHJKLMNPQRSTVWXYZ";
-    let code = "";
-    for (let i = 0; i < 8; i++) {
-      if (i === 4) code += "-";
-      code += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-
-    setTimeout(() => {
-      setUserCode(code);
-      setVerificationUrl("https://www.youtube.com/activate");
+    try {
+      const s = await ytDeviceStart();
+      if ("error" in s) throw new Error(s.error);
+      setUserCode(s.user_code);
+      setVerificationUrl(s.verification_url);
       setAuthStatus("pending");
-
-      // WeTubeポーリングシミュレーション：ユーザー認証完了を待機
-      let pollCount = 0;
-      pollTimerRef.current = setInterval(() => {
-        pollCount++;
-        // 12秒経過で承認完了をエミュレート（または手動リンククリック後）
-        if (pollCount >= 6) {
-          if (pollTimerRef.current) clearInterval(pollTimerRef.current);
-          const newAccount: YouTubeAccount = {
-            name: "YouTube ユーザー",
-            handle: "@youtube_viewer",
-            avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&auto=format&fit=crop&q=80",
-            loggedInAt: Date.now(),
-          };
-          setAccount(newAccount);
-          localStorage.setItem("rinetube_account_v1", JSON.stringify(newAccount));
-          setAuthStatus("signed_in");
-          toast.success("YouTubeアカウントと同期しました！");
+      let wait = Math.max(5, s.interval) * 1000;
+      const deadline = Date.now() + 15 * 60_000;
+      const tick = async () => {
+        if (Date.now() > deadline) {
+          setAuthStatus("signed_out");
+          setAuthError("コードの有効期限が切れました。もう一度お試しください。");
+          return;
         }
-      }, 2000);
-    }, 800);
+        try {
+          const p = await ytDevicePoll({ data: { device_code: s.device_code } });
+          if (p.status === "ok" && "access_token" in p) {
+            saveAccount({
+              name: p.name,
+              handle: p.handle,
+              avatar: p.avatar,
+              loggedInAt: Date.now(),
+              access_token: p.access_token,
+              refresh_token: p.refresh_token,
+              expires_at: p.expires_at,
+            });
+            setAuthStatus("signed_in");
+            toast.success("YouTubeアカウントと同期しました！");
+            loadSubsFeed(true);
+            return;
+          }
+          if (p.status === "slow_down") wait += 5000;
+          else if (p.status !== "authorization_pending") {
+            setAuthStatus("signed_out");
+            setAuthError(
+              p.status === "access_denied"
+                ? "ログインが拒否されました。"
+                : p.status === "expired_token"
+                  ? "コードの有効期限が切れました。"
+                  : "ログインに失敗しました。Googleのテストユーザーに登録されているか確認してください。",
+            );
+            return;
+          }
+        } catch {
+          /* 通信エラーは次回再試行 */
+        }
+        pollTimerRef.current = setTimeout(tick, wait);
+      };
+      pollTimerRef.current = setTimeout(tick, wait);
+    } catch (e) {
+      setAuthStatus("signed_out");
+      setAuthError(
+        "認証を開始できませんでした。Google側のクライアント種類が「テレビと入力制限のあるデバイス」か確認してください。",
+      );
+      console.error(e);
+    }
+  };
+
+  // 登録チャンネルのおすすめ（無限スクロール対応）
+  const loadSubsFeed = async (reset = false) => {
+    if (loadingMoreRef.current) return;
+    const token = await getToken();
+    if (!token) return;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    try {
+      const r = await ytSubsFeed({
+        data: { access_token: token, pageToken: reset ? undefined : subsTokenRef.current ?? undefined },
+      });
+      feedModeRef.current = "subs";
+      subsTokenRef.current = r.nextPageToken;
+      setHasMore(!!r.nextPageToken);
+      setSelectedCategory("subs");
+      setVideos((prev) => {
+        const base = reset ? [] : prev;
+        const seen = new Set(base.map((v) => v.id));
+        return [...base, ...r.items.filter((v) => !seen.has(v.id) && seen.add(v.id))];
+      });
+    } catch {
+      toast.error("登録チャンネルを読み込めませんでした");
+    } finally {
+      loadingMoreRef.current = false;
+      setLoadingMore(false);
+    }
   };
 
   const copyCodeToClipboard = async () => {
@@ -274,25 +368,50 @@ export default function RINETubePage() {
   };
 
   const signOut = () => {
-    if (pollTimerRef.current) clearInterval(pollTimerRef.current);
-    setAccount(null);
-    localStorage.removeItem("rinetube_account_v1");
+    if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
+    saveAccount(null);
     setAuthStatus("signed_out");
     setUserCode("");
     toast.success("ログアウトしました");
   };
 
   // 動画検索（Invidious経由）
-  const searchVideos = async (keyword: string) => {
+  const searchVideos = async (keyword: string, page = 1, append = false) => {
     if (!keyword.trim()) return;
-    setLoading(true);
+    if (append) {
+      if (loadingMoreRef.current) return;
+      loadingMoreRef.current = true;
+      setLoadingMore(true);
+    } else setLoading(true);
+    feedModeRef.current = "search";
+    lastQueryRef.current = keyword;
+    pageRef.current = page;
+    if (!append) searchContRef.current = null;
     try {
+      // まずはサーバー経由の高速検索（安定・続きの読み込み対応）
+      try {
+        const r = await ytSearch({
+          data: append && searchContRef.current ? { continuation: searchContRef.current } : { q: keyword },
+        });
+        if (r.items.length > 0) {
+          searchContRef.current = r.continuation;
+          setHasMore(!!r.continuation);
+          setVideos((prev) => {
+            const base = append ? prev : [];
+            const seen = new Set(base.map((v) => v.id));
+            return [...base, ...r.items.filter((v) => !seen.has(v.id) && seen.add(v.id))];
+          });
+          return;
+        }
+      } catch {
+        /* 予備のInvidiousへ */
+      }
       const hosts = [invidiousHost.replace(/\/+$/, ""), ...FALLBACK_HOSTS.filter((h) => h !== invidiousHost.replace(/\/+$/, ""))];
       let data: any = null;
       for (const host of hosts) {
         try {
           const res = await fetch(
-            `${host}/api/v1/search?q=${encodeURIComponent(keyword)}&type=video&sort_by=relevance`,
+            `${host}/api/v1/search?q=${encodeURIComponent(keyword)}&type=video&sort_by=relevance&page=${page}`,
             { signal: AbortSignal.timeout(5000) }
           );
           if (!res.ok) continue;
@@ -318,16 +437,53 @@ export default function RINETubePage() {
             ? `${Math.floor(item.lengthSeconds / 60)}:${String(item.lengthSeconds % 60).padStart(2, "0")}`
             : undefined,
         }));
-        setVideos(formatted);
+        setHasMore(true);
+        setVideos((prev) => {
+          const base = append ? prev : [];
+          const seen = new Set(base.map((v) => v.id));
+          return [...base, ...formatted.filter((v) => v.id && !seen.has(v.id) && seen.add(v.id))];
+        });
       } else {
-        toast.info("該当する動画が見つかりませんでした");
+        setHasMore(false);
+        if (!append) toast.info("該当する動画が見つかりませんでした");
       }
     } catch {
-      toast.error("検索サーバーに接続できませんでした。別サーバーをお試しください。");
+      if (!append) toast.error("検索サーバーに接続できませんでした。別サーバーをお試しください。");
+      else setHasMore(false);
     } finally {
       setLoading(false);
+      if (append) {
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+      }
     }
   };
+
+  // 画面の一番下に来たら続きを自動で読み込む
+  const loadMoreRef = useRef<() => void>(() => {});
+  loadMoreRef.current = () => {
+    if (loadingMoreRef.current || loading || !hasMore) return;
+    if (feedModeRef.current === "subs") loadSubsFeed(false);
+    else searchVideos(lastQueryRef.current, pageRef.current + 1, true);
+  };
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) loadMoreRef.current();
+      },
+      { rootMargin: "600px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
+  // ログイン済みなら登録チャンネルのおすすめを最初に表示
+  useEffect(() => {
+    if (account?.access_token && feedModeRef.current === "search" && pageRef.current === 0) loadSubsFeed(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [account?.access_token]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -563,6 +719,17 @@ export default function RINETubePage() {
         <main className="flex-1 p-3 sm:p-5 max-w-7xl mx-auto w-full space-y-6">
           {/* カテゴリピル（チップバー） */}
           <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none">
+            {account?.access_token && (
+              <button
+                type="button"
+                onClick={() => loadSubsFeed(true)}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
+                  selectedCategory === "subs" ? "bg-red-600 text-white" : "bg-[#272727] text-white hover:bg-[#383838]"
+                }`}
+              >
+                登録チャンネル
+              </button>
+            )}
             {CATEGORIES.map((cat) => (
               <button
                 key={cat.id}
@@ -653,7 +820,9 @@ export default function RINETubePage() {
           <div>
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-base font-bold text-white flex items-center gap-2">
-                <span>{selectedCategory === "all" ? "おすすめ動画" : "検索結果"}</span>
+                <span>
+                  {selectedCategory === "subs" ? "登録チャンネルの新着" : selectedCategory === "all" ? "おすすめ動画" : "検索結果"}
+                </span>
                 {loading && <Loader2 className="size-4 animate-spin text-red-500" />}
               </h2>
               <span className="text-xs text-[#888]">{videos.length}件</span>
@@ -714,6 +883,22 @@ export default function RINETubePage() {
                 );
               })}
             </div>
+            <div ref={sentinelRef} className="h-10" />
+            <div className="flex justify-center py-4">
+              {loadingMore ? (
+                <Loader2 className="size-6 animate-spin text-red-500" />
+              ) : hasMore ? (
+                <button
+                  type="button"
+                  onClick={() => loadMoreRef.current()}
+                  className="px-4 py-2 rounded-full bg-[#272727] text-white text-xs font-semibold hover:bg-[#383838]"
+                >
+                  もっと見る
+                </button>
+              ) : (
+                <span className="text-xs text-[#717171]">これ以上ありません</span>
+              )}
+            </div>
           </div>
         </main>
       </div>
@@ -733,7 +918,7 @@ export default function RINETubePage() {
               type="button"
               onClick={() => {
                 setTvAuthOpen(false);
-                if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+                if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
               }}
               className="absolute top-4 right-4 text-[#aaa] hover:text-white p-1 rounded-full hover:bg-[#333]"
               aria-label="閉じる"
@@ -758,6 +943,9 @@ export default function RINETubePage() {
                   テレビ認証を使ってログインすると、あなたのアカウントの再生履歴、登録チャンネル、おすすめを同期できます。
                 </p>
 
+                {authError && (
+                  <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg p-2">{authError}</p>
+                )}
                 <div className="pt-2">
                   <Button
                     onClick={startTvAuth}
@@ -811,7 +999,7 @@ export default function RINETubePage() {
                   rel="noopener noreferrer"
                   className="w-full flex items-center justify-center gap-2 py-3 bg-[#2a2a2a] hover:bg-[#333] border border-[#444] rounded-xl text-white font-bold text-sm transition-colors group"
                 >
-                  <span>認証ページを開く (youtube.com/activate)</span>
+                  <span>認証ページを開く ({verificationUrl.replace(/^https?:\/\//, "")})</span>
                   <ExternalLink className="size-4 text-[#aaa] group-hover:text-white" />
                 </a>
 
