@@ -219,46 +219,124 @@ export default function RINETubePage() {
     toast.success("設定を保存しました");
   };
 
-  // WeTube方式：テレビ認証の開始
-  const startTvAuth = () => {
-    if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+  const accountRef = useRef<YouTubeAccount | null>(null);
+  useEffect(() => {
+    accountRef.current = account;
+  }, [account]);
+
+  const saveAccount = (a: YouTubeAccount | null) => {
+    accountRef.current = a;
+    setAccount(a);
+    if (a) localStorage.setItem("rinetube_account_v1", JSON.stringify(a));
+    else localStorage.removeItem("rinetube_account_v1");
+  };
+
+  // 有効なアクセストークンを取得（期限切れなら自動更新）
+  const getToken = async (): Promise<string | null> => {
+    const acc = accountRef.current;
+    if (!acc?.access_token) return null;
+    if (acc.expires_at && acc.expires_at - 60_000 > Date.now()) return acc.access_token;
+    if (!acc.refresh_token) return null;
+    try {
+      const r = await ytRefresh({ data: { refresh_token: acc.refresh_token } });
+      if (!("access_token" in r)) return null;
+      saveAccount({ ...acc, access_token: r.access_token, expires_at: r.expires_at });
+      return r.access_token;
+    } catch {
+      return null;
+    }
+  };
+
+  // 本物のテレビ認証（Google デバイスコード方式）
+  const startTvAuth = async () => {
+    if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
     setAuthStatus("starting");
     setAuthError("");
     setCodeCopied(false);
-
-    // ランダムな8桁のコード生成（WeTube TV OAuth形式: XXXX-XXXX）
-    const chars = "BCDFGHJKLMNPQRSTVWXYZ";
-    let code = "";
-    for (let i = 0; i < 8; i++) {
-      if (i === 4) code += "-";
-      code += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-
-    setTimeout(() => {
-      setUserCode(code);
-      setVerificationUrl("https://www.youtube.com/activate");
+    try {
+      const s = await ytDeviceStart();
+      if ("error" in s) throw new Error(s.error);
+      setUserCode(s.user_code);
+      setVerificationUrl(s.verification_url);
       setAuthStatus("pending");
-
-      // WeTubeポーリングシミュレーション：ユーザー認証完了を待機
-      let pollCount = 0;
-      pollTimerRef.current = setInterval(() => {
-        pollCount++;
-        // 12秒経過で承認完了をエミュレート（または手動リンククリック後）
-        if (pollCount >= 6) {
-          if (pollTimerRef.current) clearInterval(pollTimerRef.current);
-          const newAccount: YouTubeAccount = {
-            name: "YouTube ユーザー",
-            handle: "@youtube_viewer",
-            avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&auto=format&fit=crop&q=80",
-            loggedInAt: Date.now(),
-          };
-          setAccount(newAccount);
-          localStorage.setItem("rinetube_account_v1", JSON.stringify(newAccount));
-          setAuthStatus("signed_in");
-          toast.success("YouTubeアカウントと同期しました！");
+      let wait = Math.max(5, s.interval) * 1000;
+      const deadline = Date.now() + 15 * 60_000;
+      const tick = async () => {
+        if (Date.now() > deadline) {
+          setAuthStatus("signed_out");
+          setAuthError("コードの有効期限が切れました。もう一度お試しください。");
+          return;
         }
-      }, 2000);
-    }, 800);
+        try {
+          const p = await ytDevicePoll({ data: { device_code: s.device_code } });
+          if (p.status === "ok" && "access_token" in p) {
+            saveAccount({
+              name: p.name,
+              handle: p.handle,
+              avatar: p.avatar,
+              loggedInAt: Date.now(),
+              access_token: p.access_token,
+              refresh_token: p.refresh_token,
+              expires_at: p.expires_at,
+            });
+            setAuthStatus("signed_in");
+            toast.success("YouTubeアカウントと同期しました！");
+            loadSubsFeed(true);
+            return;
+          }
+          if (p.status === "slow_down") wait += 5000;
+          else if (p.status !== "authorization_pending") {
+            setAuthStatus("signed_out");
+            setAuthError(
+              p.status === "access_denied"
+                ? "ログインが拒否されました。"
+                : p.status === "expired_token"
+                  ? "コードの有効期限が切れました。"
+                  : "ログインに失敗しました。Googleのテストユーザーに登録されているか確認してください。",
+            );
+            return;
+          }
+        } catch {
+          /* 通信エラーは次回再試行 */
+        }
+        pollTimerRef.current = setTimeout(tick, wait);
+      };
+      pollTimerRef.current = setTimeout(tick, wait);
+    } catch (e) {
+      setAuthStatus("signed_out");
+      setAuthError(
+        "認証を開始できませんでした。Google側のクライアント種類が「テレビと入力制限のあるデバイス」か確認してください。",
+      );
+      console.error(e);
+    }
+  };
+
+  // 登録チャンネルのおすすめ（無限スクロール対応）
+  const loadSubsFeed = async (reset = false) => {
+    if (loadingMoreRef.current) return;
+    const token = await getToken();
+    if (!token) return;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    try {
+      const r = await ytSubsFeed({
+        data: { access_token: token, pageToken: reset ? undefined : subsTokenRef.current ?? undefined },
+      });
+      feedModeRef.current = "subs";
+      subsTokenRef.current = r.nextPageToken;
+      setHasMore(!!r.nextPageToken);
+      setSelectedCategory("subs");
+      setVideos((prev) => {
+        const base = reset ? [] : prev;
+        const seen = new Set(base.map((v) => v.id));
+        return [...base, ...r.items.filter((v) => !seen.has(v.id) && seen.add(v.id))];
+      });
+    } catch {
+      toast.error("登録チャンネルを読み込めませんでした");
+    } finally {
+      loadingMoreRef.current = false;
+      setLoadingMore(false);
+    }
   };
 
   const copyCodeToClipboard = async () => {
