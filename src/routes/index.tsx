@@ -1,10 +1,20 @@
 import { StaffBadge } from "@/components/StaffBadge";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Check, Copy, MailOpen, MessageCircleMore, UserPlus } from "lucide-react";
+import {
+  Bookmark,
+  Check,
+  Copy,
+  MailOpen,
+  MessageCircleMore,
+  MoreVertical,
+  Search,
+  UserPlus,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { fetchProfile, fetchProfiles } from "@/lib/profileCache";
+import { fetchProfiles } from "@/lib/profileCache";
 import { cleanupOldData } from "@/lib/cleanup.functions";
 import { requestNotificationPermission } from "@/lib/notify";
 import { useAuth } from "@/hooks/useAuth";
@@ -18,8 +28,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { MoreVertical } from "lucide-react";
 import { formatListTime, formatTime, initials, type Message, type Profile } from "@/lib/rine";
+import { useRineTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/")({
@@ -46,8 +56,10 @@ type Row = { friend: Profile; last?: Message | undefined; unread: number };
 function TalksPage() {
   const { user, profile } = useAuth();
   const { blockedIds } = useBlocks();
+  const [theme] = useRineTheme();
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
   const rowsRef = useRef<Row[]>([]);
   rowsRef.current = rows;
 
@@ -60,7 +72,6 @@ function TalksPage() {
     window.addEventListener("pointerdown", ask);
     return () => window.removeEventListener("pointerdown", ask);
   }, []);
-
 
   useEffect(() => {
     if (!user) return;
@@ -83,7 +94,6 @@ function TalksPage() {
         fetchProfiles(ids).then((data) => ({ data })),
         supabase
           .from("messages")
-          // 一覧では必要な列だけ・直近分だけ取得して通信量とクラウド利用量を抑える
           .select("id,sender_id,receiver_id,content,image_url,media_type,read_at,created_at")
           .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
           .order("created_at", { ascending: false })
@@ -137,14 +147,11 @@ function TalksPage() {
 
     const channel = supabase
       .channel("talks-messages")
-      // 自分宛て・自分発のメッセージだけ受け取る（全員分を受信しない）
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "messages", filter: `receiver_id=eq.${user.id}` },
-        // 通知は Notifications が出すので、ここは一覧の更新だけ
         scheduleLoad,
       )
-      // 自分の友だち行だけを購読
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "friendships", filter: `user_id=eq.${user.id}` },
@@ -163,6 +170,19 @@ function TalksPage() {
     () => rows.filter((r) => !blockedIds.includes(r.friend.id)),
     [rows, blockedIds],
   );
+
+  // LINE風リアルタイム検索（友だちの名前・ID・直近メッセージをフィルタリング）
+  const filteredRows = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return visible;
+    return visible.filter(({ friend, last }) => {
+      const name = (friend.display_name ?? "").toLowerCase();
+      const code = (friend.friend_code ?? "").toLowerCase();
+      const content = (last?.content ?? "").toLowerCase();
+      return name.includes(q) || code.includes(q) || content.includes(q);
+    });
+  }, [visible, searchQuery]);
+
   const empty = !loading && visible.length === 0;
   const totalUnread = visible.reduce((sum, r) => sum + r.unread, 0);
 
@@ -178,7 +198,6 @@ function TalksPage() {
         .is("read_at", null);
       error = res.error;
     } else {
-      // 未読に戻すのは直近の受信メッセージ1件だけ
       const { data: latest } = await supabase
         .from("messages")
         .select("id")
@@ -218,27 +237,72 @@ function TalksPage() {
     toast.success(read ? "既読にしました" : "未読にしました");
   };
 
+  const isLine = theme === "line";
+
   return (
     <AppShell
       title={totalUnread > 0 ? `トーク (${totalUnread})` : "トーク"}
       action={
-        totalUnread > 0 ? (
+        <div className="flex items-center gap-1.5">
           <Button
+            asChild
             variant="ghost"
             size="sm"
-            className="text-xs"
-            onClick={async () => {
-              for (const r of visible.filter((x) => x.unread > 0)) {
-                await setThreadRead(r.friend.id, true);
-              }
-            }}
+            className="h-8 px-2 text-xs text-muted-foreground hover:text-foreground"
+            title="Keepメモ（自分専用のメモ帳）"
           >
-            <MailOpen className="mr-1 size-4" />
-            すべて既読
+            <Link to="/keep">
+              <Bookmark className="mr-1 size-3.5 text-amber-500" />
+              Keep
+            </Link>
           </Button>
-        ) : undefined
+          {totalUnread > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 px-2 text-xs"
+              onClick={async () => {
+                for (const r of visible.filter((x) => x.unread > 0)) {
+                  await setThreadRead(r.friend.id, true);
+                }
+              }}
+            >
+              <MailOpen className="mr-1 size-3.5" />
+              既読
+            </Button>
+          )}
+        </div>
       }
     >
+      {/* LINE風 検索バー */}
+      {!empty && (
+        <div className="sticky top-0 z-10 border-b bg-background/95 px-4 py-2.5 backdrop-blur-sm">
+          <div className="relative flex items-center">
+            <Search className="pointer-events-none absolute left-3 size-4 text-muted-foreground" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="検索"
+              className={cn(
+                "h-9 w-full rounded-xl pl-9 pr-8 text-sm outline-none transition-colors",
+                "bg-muted/60 text-foreground placeholder:text-muted-foreground focus:bg-muted focus:ring-1 focus:ring-primary/40",
+              )}
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2.5 flex size-5 items-center justify-center rounded-full bg-muted-foreground/20 text-muted-foreground hover:bg-muted-foreground/30"
+                aria-label="検索クリア"
+              >
+                <X className="size-3" />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {empty ? (
         <div className="flex flex-col items-center gap-5 px-6 py-12 text-center">
           <MessageCircleMore className="size-14 text-muted-foreground/40" />
@@ -298,72 +362,121 @@ function TalksPage() {
             </StepCard>
           </ol>
         </div>
+      ) : filteredRows.length === 0 ? (
+        <div className="py-16 text-center text-sm text-muted-foreground">
+          「{searchQuery}」に一致するトークはありません
+        </div>
       ) : (
-        <ul className="divide-y divide-border">
-          {visible.map(({ friend, last, unread }) => {
+        /* LINE風 2段レイアウト・リスト */
+        <ul className="divide-y divide-border/60">
+          {filteredRows.map(({ friend, last, unread }) => {
             const mineLast = last?.sender_id === user?.id;
             return (
-              <li key={friend.id} className="flex items-center">
+              <li
+                key={friend.id}
+                className="group flex items-center transition-colors hover:bg-muted/40 active:bg-muted/60"
+              >
+                {/* 左側：LINE仕様アバター */}
                 <Link
                   to="/friend/$friendId"
                   params={{ friendId: friend.id }}
-                  className="shrink-0 py-4 pl-5 pr-1"
+                  className="shrink-0 py-3.5 pl-4 pr-3"
                   aria-label={`${friend.display_name} のプロフィール`}
                 >
-                  <Avatar className="size-12">
-                    <AvatarImage src={friend.avatar_url ?? undefined} alt={friend.display_name} />
-                    <AvatarFallback className="bg-brand-gradient text-primary-foreground">
+                  <Avatar className="size-[50px] ring-1 ring-border/30">
+                    <AvatarImage
+                      src={friend.avatar_url ?? undefined}
+                      alt={friend.display_name}
+                      className="object-cover"
+                    />
+                    <AvatarFallback
+                      className={cn(
+                        "font-bold text-white",
+                        isLine ? "bg-[#06C755]" : "bg-brand-gradient",
+                      )}
+                    >
                       {initials(friend.display_name)}
                     </AvatarFallback>
                   </Avatar>
                 </Link>
+
+                {/* 中央〜右側：上段（名前＋時刻）、下段（本文＋未読バッジ） */}
                 <Link
                   to="/chat/$friendId"
                   params={{ friendId: friend.id }}
-                  className="flex min-w-0 flex-1 items-center gap-3 py-4 pr-2 transition-colors hover:bg-muted/60"
+                  className="flex min-w-0 flex-1 flex-col justify-center py-3.5 pr-2"
                 >
-                  <div className="min-w-0 flex-1">
-                    <p className={cn("truncate", unread > 0 ? "font-bold" : "font-semibold")}>
+                  {/* 上段：名前 ＆ 時刻 */}
+                  <div className="flex items-center justify-between gap-2">
+                    <p
+                      className={cn(
+                        "truncate text-[15px]",
+                        unread > 0 ? "font-bold text-foreground" : "font-semibold text-foreground/90",
+                      )}
+                    >
                       {friend.display_name}
                       <StaffBadge userId={friend.id} />
                     </p>
-                    <p
-                      className={cn(
-                        "truncate text-sm",
-                        unread > 0 ? "font-medium text-foreground" : "text-muted-foreground",
-                      )}
-                    >
-                      {last
-                        ? last.media_type === "missed_call"
-                          ? `不在着信 ${formatTime(last.created_at)}`
-                          : `${mineLast ? "自分: " : ""}${last.image_url ? "画像を送信しました" : last.content}`
-                        : friend.status_message || "トークを始めましょう"}
-                    </p>
-                  </div>
-                  <span className="flex shrink-0 flex-col items-end gap-1">
                     {last && (
-                      <span className="text-[11px] text-muted-foreground">
+                      <span className="shrink-0 text-[11px] text-muted-foreground/80">
                         {formatListTime(last.created_at)}
                       </span>
                     )}
-                    {unread > 0 ? (
-                      <span className="min-w-5 rounded-full bg-primary px-1.5 py-0.5 text-center text-[11px] font-bold leading-4 text-primary-foreground">
-                        {unread > 99 ? "99+" : unread}
-                      </span>
-                    ) : mineLast && last?.read_at ? (
-                      <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground">
-                        <Check className="size-3" />
-                        既読
-                      </span>
-                    ) : null}
-                  </span>
+                  </div>
+
+                  {/* 下段：最新メッセージ ＆ 未読バッジ（LINEグリーン） */}
+                  <div className="mt-0.5 flex items-center justify-between gap-3">
+                    <p
+                      className={cn(
+                        "truncate text-[13px] leading-relaxed",
+                        unread > 0 ? "font-medium text-foreground" : "text-muted-foreground",
+                      )}
+                    >
+                      {last ? (
+                        last.media_type === "missed_call" ? (
+                          <span className="text-destructive">📞 不在着信 {formatTime(last.created_at)}</span>
+                        ) : last.image_url ? (
+                          <span>{mineLast ? "自分: " : ""}📷 画像を送信しました</span>
+                        ) : (
+                          <span>
+                            {mineLast ? "自分: " : ""}
+                            {last.content}
+                          </span>
+                        )
+                      ) : (
+                        <span className="italic text-muted-foreground/70">
+                          {friend.status_message || "トークを始めましょう"}
+                        </span>
+                      )}
+                    </p>
+
+                    <div className="flex shrink-0 items-center gap-1">
+                      {unread > 0 ? (
+                        <span
+                          className={cn(
+                            "flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-center text-[11px] font-bold leading-none text-white shadow-sm",
+                            isLine ? "bg-[#06C755]" : "bg-primary",
+                          )}
+                        >
+                          {unread > 99 ? "99+" : unread}
+                        </span>
+                      ) : mineLast && last?.read_at ? (
+                        <span className="flex items-center gap-0.5 text-[11px] text-muted-foreground">
+                          <Check className="size-3 text-[#06C755]" />
+                          既読
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
                 </Link>
+
+                {/* 3点メニュー */}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="mr-2 shrink-0"
+                      className="mr-2 size-8 shrink-0 text-muted-foreground hover:text-foreground"
                       aria-label={`${friend.display_name} のトーク操作`}
                     >
                       <MoreVertical className="size-4" />
