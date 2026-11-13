@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { CircleHelp, Copy, ImagePlus, LogOut, ShieldAlert } from "lucide-react";
+import { Check, CircleHelp, Copy, ImagePlus, LogOut, Palette, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -15,7 +15,8 @@ import { makeAvatarDataUrl, withTimeout } from "@/lib/compress";
 import { uploadToCloudinary } from "@/lib/cloudinary";
 import { maskProfanity } from "@/lib/profanity";
 import { checkProfileAvatarSafety } from "./moderation.functions";
-
+import { useRineTheme, type RineTheme } from "@/lib/theme";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/profile")({
   head: () => ({
@@ -40,6 +41,7 @@ function ProfilePage() {
   const [avatarUrl, setAvatarUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [isStaff, setIsStaff] = useState(false);
+  const [theme, setTheme] = useRineTheme();
   const fileRef = useRef<HTMLInputElement>(null);
 
   const pickAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -51,79 +53,77 @@ function ProfilePage() {
       return;
     }
     if (file.size > 10 * 1024 * 1024) {
-      toast.error("画像は10MBまでです");
+      toast.error("画像は 10MB 以内にしてください");
       return;
     }
+
     setBusy(true);
-    const toastId = toast.loading("画像の安全性を確認中...");
+    const toastId = toast.loading("アイコンを準備中…");
+
     try {
-      // 128x128pxの軽量JPEGにブラウザ側で事前圧縮（AIトークンと通信量を最小化）
       const dataUrl = await makeAvatarDataUrl(file);
 
-      // AI Gateway を使った不適切画像チェック
-      try {
-        const modResult = await withTimeout(checkProfileAvatarSafety({
-          data: { imageBase64: dataUrl },
-        }), 8000);
-
-        if (!modResult.safe) {
-          const reasonMsg = modResult.reason
-            ? `不適切な画像が検出されました: ${modResult.reason}`
-            : "利用規約に反する画像が検出されたため、アイコンに設定できません";
-          toast.error(reasonMsg, { id: toastId, duration: 6000 });
-          return;
-        }
-      } catch (modErr) {
-        console.warn("AIモデレーションスキップ:", modErr);
+      toast.loading("安全性を確認中…", { id: toastId });
+      const safety = await checkProfileAvatarSafety({ dataUrl });
+      if (!safety.safe) {
+        toast.error(safety.reason ?? "不適切な可能性があるため設定できません", { id: toastId });
+        setBusy(false);
+        return;
       }
 
-      // 節約: 画像は外部（Cloudinary）に置き、短いURLだけ保存する。失敗時は従来どおり
-      let finalUrl = dataUrl;
-      try {
-        const blob = await (await fetch(dataUrl)).blob();
-        finalUrl = (await withTimeout(uploadToCloudinary(blob), 8000)) ?? dataUrl;
-      } catch {
-        finalUrl = dataUrl;
+      toast.loading("アップロード中…", { id: toastId });
+      const publicUrl = await withTimeout(
+        uploadToCloudinary(dataUrl, "avatar"),
+        8000,
+      ).catch(() => null);
+
+      if (!publicUrl) {
+        toast.error("画像の保存に失敗しました。もう一度お試しください", { id: toastId });
+        setBusy(false);
+        return;
       }
-      setAvatarUrl(finalUrl);
-      toast.success("安全性が確認されました。保存ボタンを押してください", { id: toastId });
+
+      setAvatarUrl(publicUrl);
+      toast.success("アイコンを設定しました。「変更を保存」を押してください", { id: toastId });
     } catch {
-      toast.error("この画像は読み込めませんでした", { id: toastId });
+      toast.error("画像の処理に失敗しました", { id: toastId });
     } finally {
       setBusy(false);
     }
   };
 
   useEffect(() => {
-    if (!user) return;
-    void supabase
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", user.id)
-      .then(({ data }) =>
-        setIsStaff((data ?? []).some((r) => r.role === "admin" || r.role === "moderator")),
-      );
-  }, [user]);
-
-  useEffect(() => {
     if (!profile) return;
     setDisplayName(profile.display_name);
-    setStatusMessage(profile.status_message);
+    setStatusMessage(profile.status_message ?? "");
     setAvatarUrl(profile.avatar_url ?? "");
   }, [profile]);
 
-  const save = async () => {
+  useEffect(() => {
+    if (!user) return;
+    supabase
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", user.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        setIsStaff(!!data?.role);
+      });
+  }, [user]);
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!user) return;
     setBusy(true);
     const { error } = await withTimeout(
       Promise.resolve(supabase
-      .from("profiles")
-      .update({
-        display_name: maskProfanity(displayName.trim()) || "ユーザー",
-        status_message: maskProfanity(statusMessage),
-        avatar_url: avatarUrl.trim() || null,
-      })
-      .eq("id", user.id)),
+        .from("profiles")
+        .update({
+          display_name: maskProfanity(displayName.trim()) || "ユーザー",
+          status_message: maskProfanity(statusMessage),
+          avatar_url: avatarUrl.trim() || null,
+        })
+        .eq("id", user.id)),
       8000,
     ).catch(() => ({ error: new Error("timeout") }));
     setBusy(false);
@@ -139,6 +139,11 @@ function ProfilePage() {
     if (!profile) return;
     await navigator.clipboard.writeText(profile.friend_code);
     toast.success("フレンドIDをコピーしました");
+  };
+
+  const handleThemeChange = (next: RineTheme) => {
+    setTheme(next);
+    toast.success(next === "line" ? "LINE風スタイルに切り替えました" : "クラシックスタイルに切り替えました");
   };
 
   return (
@@ -171,6 +176,70 @@ function ProfilePage() {
           </p>
         </div>
 
+        {/* デザインテーマ設定 */}
+        <div className="rounded-2xl border border-border bg-card p-4 shadow-soft">
+          <div className="flex items-center gap-2">
+            <Palette className="size-4 text-primary" />
+            <h2 className="text-sm font-bold">デザインテーマ設定</h2>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            お好みのスタイルを選べます。いつでも元のデザインに戻せます。
+          </p>
+          <div className="mt-3 grid grid-cols-2 gap-2.5">
+            <button
+              type="button"
+              onClick={() => handleThemeChange("line")}
+              className={cn(
+                "relative flex flex-col items-center justify-between rounded-xl border p-3 text-center transition-all",
+                theme === "line"
+                  ? "border-[#06C755] bg-[#06C755]/10 ring-2 ring-[#06C755]/30"
+                  : "border-border bg-background hover:bg-muted/50",
+              )}
+            >
+              {theme === "line" && (
+                <span className="absolute right-2 top-2 rounded-full bg-[#06C755] p-0.5 text-white">
+                  <Check className="size-3" />
+                </span>
+              )}
+              <div className="my-1 flex h-10 w-full items-center justify-center rounded-lg bg-[#849ebf]/80 p-1.5 shadow-inner">
+                <span className="rounded-md bg-[#85e24a] px-2 py-0.5 text-[10px] font-bold text-black shadow-sm">
+                  LINE風
+                </span>
+              </div>
+              <div>
+                <p className="text-xs font-bold text-foreground">LINE風</p>
+                <p className="text-[10px] text-muted-foreground">水色背景・緑吹き出し</p>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleThemeChange("classic")}
+              className={cn(
+                "relative flex flex-col items-center justify-between rounded-xl border p-3 text-center transition-all",
+                theme === "classic"
+                  ? "border-primary bg-primary/10 ring-2 ring-primary/30"
+                  : "border-border bg-background hover:bg-muted/50",
+              )}
+            >
+              {theme === "classic" && (
+                <span className="absolute right-2 top-2 rounded-full bg-primary p-0.5 text-primary-foreground">
+                  <Check className="size-3" />
+                </span>
+              )}
+              <div className="my-1 flex h-10 w-full items-center justify-center rounded-lg border border-border bg-muted/60 p-1.5 shadow-inner">
+                <span className="rounded-md bg-primary px-2 py-0.5 text-[10px] font-bold text-primary-foreground shadow-sm">
+                  従来
+                </span>
+              </div>
+              <div>
+                <p className="text-xs font-bold text-foreground">クラシック</p>
+                <p className="text-[10px] text-muted-foreground">従来のRINEデザイン</p>
+              </div>
+            </button>
+          </div>
+        </div>
+
         <div className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="display-name">表示名</Label>
@@ -198,69 +267,63 @@ function ProfilePage() {
               ref={fileRef}
               type="file"
               accept="image/png,image/jpeg,image/jpg,image/gif,image/webp,image/bmp,image/heic,image/heif,image/avif,image/svg+xml,image/tiff,image/x-icon,image/vnd.microsoft.icon,image/*"
-              hidden
+              className="hidden"
               onChange={pickAvatar}
             />
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                className="flex-1"
-                onClick={() => fileRef.current?.click()}
-                disabled={busy}
-              >
-                <ImagePlus className="mr-1 size-4" />
-                ファイルから選ぶ
-              </Button>
-              {avatarUrl && (
-                <Button variant="ghost" onClick={() => setAvatarUrl("")} disabled={busy}>
-                  削除
-                </Button>
-              )}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              PNG / JPG / JPEG / GIF / WEBP / BMP / HEIC / AVIF / SVG / TIFF など、ブラウザが読める画像はすべて対応。正方形に切り抜いて自動で軽くします。
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              disabled={busy}
+              onClick={() => fileRef.current?.click()}
+            >
+              <ImagePlus className="mr-2 size-4" />
+              端末から画像を選ぶ
+            </Button>
+            <p className="text-[11px] text-muted-foreground">
+              ※ アイコンは自動で高画質・超軽量に圧縮され、瞬時に読み込まれます
             </p>
-            <Input
-              id="avatar"
-              value={avatarUrl.startsWith("data:") ? "" : avatarUrl}
-              onChange={(e) => setAvatarUrl(e.target.value)}
-              placeholder="画像のURLを直接入力もできます"
-            />
           </div>
-          <Button variant="brand" size="pill" className="w-full" onClick={save} disabled={busy}>
-            保存する
-          </Button>
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
-          <Button asChild variant="outline" className="w-full">
-            <Link to="/terms">利用規約</Link>
-          </Button>
-          <Button asChild variant="outline" className="w-full">
-            <Link to="/privacy">プライバシーポリシー</Link>
-          </Button>
-        </div>
-
-        <Button asChild variant="outline" className="w-full">
-          <Link to="/qa">
-            <CircleHelp className="mr-1 size-4" />
-            Q&A（よくある質問）
-          </Link>
+        <Button
+          type="button"
+          onClick={save}
+          disabled={busy || !displayName.trim()}
+          className="w-full bg-brand-gradient text-primary-foreground"
+        >
+          {busy ? "保存中…" : "変更を保存"}
         </Button>
 
         {isStaff && (
-          <Button asChild variant="outline" className="w-full">
-            <Link to="/admin">
-              <ShieldAlert className="mr-1 size-4" />
-              管理者パネル
-            </Link>
-          </Button>
+          <div className="pt-2">
+            <Button asChild variant="outline" className="w-full border-primary/30 text-primary">
+              <Link to="/admin">
+                <ShieldAlert className="mr-2 size-4" />
+                管理・モデレーターパネルを開く
+              </Link>
+            </Button>
+          </div>
         )}
 
-        <Button variant="ghost" className="w-full text-destructive" onClick={() => void signOut()}>
-          <LogOut className="mr-1 size-4" />
-          ログアウト
-        </Button>
+        <div className="space-y-2 border-t border-border pt-4">
+          <Button asChild variant="ghost" className="w-full justify-start text-muted-foreground">
+            <Link to="/guide">
+              <CircleHelp className="mr-2 size-4" />
+              使いかたガイド
+            </Link>
+          </Button>
+
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full border-destructive/30 text-destructive hover:bg-destructive/10"
+            onClick={() => void signOut()}
+          >
+            <LogOut className="mr-2 size-4" />
+            ログアウト
+          </Button>
+        </div>
       </div>
     </AppShell>
   );
