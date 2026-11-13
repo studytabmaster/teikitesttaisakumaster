@@ -20,6 +20,7 @@ import {
   Search,
   ShieldCheck,
   Trash2,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -143,10 +144,11 @@ function AdminPage() {
   const unlock = useServerFn(unlockAdmin);
   const fetchMyRole = useServerFn(getMyStaffRole);
   const setMute = useServerFn(adminSetMute);
+
   const toggleMute = async (u: AdminUser) => {
     let minutes = 0;
     if (!u.muted_until) {
-      const t = prompt("ミュートする時間（分）。例: 10 / 60 / 1440", "10");
+      const t = prompt("ミュートする時間（分）。例: 10 / 60 / 1440（1日）", "10");
       if (t === null) return;
       minutes = Number(t);
       if (!Number.isFinite(minutes) || minutes <= 0) return;
@@ -159,6 +161,7 @@ function AdminPage() {
       toast.error(errorMessage(e));
     }
   };
+
   const getStats = useServerFn(adminStats);
   const listUsers = useServerFn(adminListUsers);
   const setBan = useServerFn(adminSetBan);
@@ -510,32 +513,34 @@ function AdminPage() {
             </div>
 
             {/* アナウンス送信カード */}
-            {isAdmin && <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Megaphone className="size-5 text-primary" />
-                  <h3 className="font-semibold text-sm">全ユーザー画面上部へのアナウンス固定配信</h3>
+            {isAdmin && (
+              <div className="rounded-xl border bg-card p-4 sm:p-5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Megaphone className="size-5 text-primary" />
+                    <h3 className="font-semibold text-sm">全ユーザー画面上部へのアナウンス固定配信</h3>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void closeAnnouncement()}
+                    className="text-xs text-destructive hover:bg-destructive/10"
+                  >
+                    終了する
+                  </Button>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void closeAnnouncement()}
-                  className="text-xs text-destructive hover:bg-destructive/10"
-                >
-                  終了する
+                <Textarea
+                  placeholder="お知らせ本文を入力..."
+                  rows={2}
+                  value={announcement}
+                  onChange={(e) => setAnnouncement(e.target.value)}
+                  className="text-sm"
+                />
+                <Button onClick={handleSendAnnouncement} disabled={sendingAnnounce} size="sm" className="w-full text-xs font-bold">
+                  アナウンスを配信する
                 </Button>
               </div>
-              <Textarea
-                placeholder="お知らせ本文を入力..."
-                rows={2}
-                value={announcement}
-                onChange={(e) => setAnnouncement(e.target.value)}
-                className="text-sm"
-              />
-              <Button onClick={handleSendAnnouncement} disabled={sendingAnnounce} size="sm" className="w-full text-xs font-bold">
-                アナウンスを配信する
-              </Button>
-            </div>}
+            )}
           </TabsContent>
 
           {/* 招待・ランクタブ */}
@@ -610,64 +615,99 @@ function AdminPage() {
           {/* ユーザー管理タブ */}
           <TabsContent value="users" className="space-y-4 pt-2">
             <div className="flex gap-2">
-              <Input
-                placeholder="名前・フレンドIDで検索..."
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && void loadUsers(query)}
-                className="text-xs"
-              />
+              <div className="relative flex-1">
+                <Input
+                  placeholder="名前・フレンドIDで検索..."
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && void loadUsers(query)}
+                  className="pr-8 text-xs"
+                />
+                {query && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setQuery("");
+                      void loadUsers("");
+                    }}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    aria-label="検索クリア"
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                )}
+              </div>
               <Button onClick={() => void loadUsers(query)} size="sm" className="text-xs">
                 検索
               </Button>
             </div>
             <div className="space-y-2">
-              {users.map((u) => (
-                <div key={u.id} className="flex items-center justify-between p-3 rounded-xl border bg-card text-xs">
-                  <div className="flex items-center gap-2.5">
-                    <Avatar className="size-8">
-                      <AvatarImage src={u.avatar_url || undefined} />
-                      <AvatarFallback>{initials(u.display_name)}</AvatarFallback>
-                    </Avatar>
-                    <div>
-                      <div className="flex items-center gap-1.5 font-bold">
-                        <span>{u.display_name}</span>
-                        {u.role && <Badge variant="outline">{u.role}</Badge>}
-                        {u.banned && <Badge variant="destructive">停止中</Badge>}
+              {users.map((u) => {
+                const remainingMinutes = u.muted_until
+                  ? Math.max(0, Math.ceil((new Date(u.muted_until).getTime() - Date.now()) / (60 * 1000)))
+                  : 0;
+                const isMuted = remainingMinutes > 0;
+
+                return (
+                  <div key={u.id} className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl border bg-card text-xs">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <Avatar className="size-8 shrink-0">
+                        <AvatarImage src={u.avatar_url || undefined} />
+                        <AvatarFallback>{initials(u.display_name)}</AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-1.5 font-bold">
+                          <span className="truncate max-w-[150px]">{u.display_name}</span>
+                          {u.role && <Badge variant="outline">{u.role}</Badge>}
+                          {u.banned && <Badge variant="destructive">停止中</Badge>}
+                          {isMuted && (
+                            <Badge
+                              variant="secondary"
+                              className="border-amber-500/30 bg-amber-500/15 text-amber-700 dark:text-amber-400 font-medium"
+                            >
+                              🔇 ミュート中（残り{remainingMinutes}分）
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-muted-foreground font-mono">ID: {u.friend_code}</p>
                       </div>
-                      <p className="text-[10px] text-muted-foreground font-mono">ID: {u.friend_code}</p>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <Button variant="outline" size="sm" onClick={() => toggleBan(u)} className="h-7 text-[11px]">
+                        {u.banned ? "停止解除" : "停止"}
+                      </Button>
+                      <Button
+                        variant={isMuted ? "secondary" : "outline"}
+                        size="sm"
+                        onClick={() => void toggleMute(u)}
+                        className={`h-7 text-[11px] ${isMuted ? "border-amber-500/40 text-amber-700 dark:text-amber-400" : ""}`}
+                      >
+                        {isMuted ? "ミュート解除" : "ミュート"}
+                      </Button>
+                      {isAdmin && (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => changeRole(u, u.role === "moderator" ? null : "moderator")}
+                            className="h-7 text-[11px]"
+                          >
+                            {u.role === "moderator" ? "モデ解除" : "モデに"}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => changeRole(u, u.role === "admin" ? null : "admin")}
+                            className="h-7 text-[11px]"
+                          >
+                            {u.role === "admin" ? "管理者解除" : "管理者に"}
+                          </Button>
+                        </>
+                      )}
                     </div>
                   </div>
-                  <div className="flex gap-1.5">
-                    <Button variant="outline" size="sm" onClick={() => toggleBan(u)} className="h-7 text-[11px]">
-                      {u.banned ? "解除" : "停止"}
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => void toggleMute(u)} className="h-7 text-[11px]">
-                      {u.muted_until ? "ミュート解除" : "ミュート"}
-                    </Button>
-                    {isAdmin && (
-                      <>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => changeRole(u, u.role === "moderator" ? null : "moderator")}
-                          className="h-7 text-[11px]"
-                        >
-                          {u.role === "moderator" ? "モデ解除" : "モデに"}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => changeRole(u, u.role === "admin" ? null : "admin")}
-                          className="h-7 text-[11px]"
-                        >
-                          {u.role === "admin" ? "管理者解除" : "管理者に"}
-                        </Button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </TabsContent>
 
@@ -697,6 +737,8 @@ function AdminPage() {
               </div>
             ))}
           </TabsContent>
+
+          {/* スタッフタブ */}
           {isAdmin && (
             <TabsContent value="staff" className="pt-2">
               <div className="space-y-6">
