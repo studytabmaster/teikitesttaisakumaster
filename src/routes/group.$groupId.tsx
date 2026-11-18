@@ -29,6 +29,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { ChatMedia } from "@/components/ChatMedia";
 import { ReportDialog } from "@/components/ReportDialog";
 import { useBlocks } from "@/hooks/useBlocks";
+import { useRineTheme } from "@/lib/theme";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -87,38 +88,44 @@ export const Route = createFileRoute("/group/$groupId")({
   component: GroupChatPage,
 });
 
-/**
- * 荒らし対策
- *
- * 普通の日本語メッセージには影響しにくいように、
- * 「異常に同じ文字が続く」「制御・ゼロ幅文字が大量に入る」
- * 「極端に記号だけが続く」といったケースだけを検知する。
- */
+function formatDatePill(iso: string): string {
+  const d = new Date(iso);
+  const weekdays = ["日", "月", "火", "水", "木", "金", "土"];
+  const year = d.getFullYear();
+  const month = d.getMonth() + 1;
+  const date = d.getDate();
+  const day = weekdays[d.getDay()];
+  return `${year}年${month}月${date}日(${day})`;
+}
+
+function isSameDay(aIso: string, bIso: string): boolean {
+  const a = new Date(aIso);
+  const b = new Date(bIso);
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
 function hasAbnormalCharacterFlood(content: string): boolean {
   if (!content) return false;
 
-  // ゼロ幅文字・不可視系文字。
-  // 通常の日本語入力ではほぼ使われないため、大量使用のみブロック。
   const invisibleMatches = content.match(
     /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/g,
   );
-
   if (invisibleMatches && invisibleMatches.length >= 8) {
     return true;
   }
 
-  // 同じ文字を異常に連続させるケース。
-  // 20文字以上の同一文字連続を荒らしとみなす。
   if (/(.)\1{19,}/u.test(content)) {
     return true;
   }
 
-  // 同じ2～4文字の組み合わせを大量に繰り返すケース。
   if (/(.{1,4})\1{9,}/u.test(content)) {
     return true;
   }
 
-  // 記号だけの極端な連続。
   const visible = content.replace(/\s/g, "");
   if (visible.length >= 30) {
     const symbolCount = (
@@ -135,19 +142,8 @@ function hasAbnormalCharacterFlood(content: string): boolean {
   return false;
 }
 
-/**
- * 連投の異常なバーストだけを検知。
- *
- * 普通の会話では余裕を持たせ、
- * 短時間に大量の送信が発生した場合だけ制限する。
- */
-function isBurstSend(
-  history: number[],
-  now: number,
-): boolean {
+function isBurstSend(history: number[], now: number): boolean {
   const recent = history.filter((time) => now - time <= 5000);
-
-  // 5秒以内に8通以上なら異常な高速連投と判断。
   return recent.length >= 8;
 }
 
@@ -155,6 +151,8 @@ function GroupChatPage() {
   const { groupId } = Route.useParams();
   const { user, loading } = useAuth();
   const navigate = useNavigate();
+  const [theme] = useRineTheme();
+  const isLineTheme = theme === "line";
 
   const [group, setGroup] = useState<Group | null>(null);
   const [members, setMembers] = useState<Profile[]>([]);
@@ -166,20 +164,13 @@ function GroupChatPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const liveRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
-  // 直近の送信履歴。
-  // 通常の会話では制限せず、異常な高速連投だけ検知する。
   const sendHistoryRef = useRef<number[]>([]);
-
-  // 同一文面の連続送信検知用。
   const lastContentRef = useRef<string>("");
   const sameContentCountRef = useRef(0);
   const sameContentWindowRef = useRef(0);
-
-  // 送信後の短時間クールダウン。
   const blockedUntilRef = useRef(0);
   const lastSendTimeRef = useRef(0);
 
-  // 送った内容をメンバーの画面へ即座に届ける（DB反映を待たない）
   const broadcastMessage = (m: GroupMessage) => {
     void liveRef.current?.send({
       type: "broadcast",
@@ -200,9 +191,7 @@ function GroupChatPage() {
     groupId: activeCallGroup,
   } = useGroupCall();
 
-  const inThisCall =
-    callStatus !== "idle" && activeCallGroup === groupId;
-
+  const inThisCall = callStatus !== "idle" && activeCallGroup === groupId;
   const isOwner = !!user && group?.owner_id === user.id;
 
   const loadMembers = useCallback(async () => {
@@ -212,14 +201,11 @@ function GroupChatPage() {
       .eq("group_id", groupId);
 
     const ids = (rows ?? []).map((r) => r.user_id);
-
     if (ids.length === 0) {
       setMembers([]);
       return;
     }
-
     const { data } = { data: await fetchProfiles(ids) };
-
     setMembers((data ?? []) as Profile[]);
   }, [groupId]);
 
@@ -230,12 +216,7 @@ function GroupChatPage() {
 
     const load = async () => {
       const [{ data: g }, { data: msgs }] = await Promise.all([
-        supabase
-          .from("groups")
-          .select("*")
-          .eq("id", groupId)
-          .maybeSingle(),
-
+        supabase.from("groups").select("*").eq("id", groupId).maybeSingle(),
         supabase
           .from("group_messages")
           .select("*")
@@ -245,63 +226,29 @@ function GroupChatPage() {
       ]);
 
       if (cancelled) return;
-
       setGroup((g as Group) ?? null);
 
-      // 新しい順に取って表示用に昇順へ戻す
-      setMessages(
-        (((msgs ?? []) as GroupMessage[])
-          .slice()
-          .reverse()) as GroupMessage[],
-      );
+      if (msgs) {
+        const sorted = (msgs as GroupMessage[]).slice().reverse();
+        setMessages(sorted);
+      }
 
       void loadMembers();
+
+      const { data: r } = await supabase
+        .from("group_reads")
+        .select("*")
+        .eq("group_id", groupId);
+
+      if (!cancelled && r) {
+        setReads(r as GroupRead[]);
+      }
     };
 
     void load();
 
-    const loadReads = async () => {
-      const { data } = await supabase
-        .from("group_reads")
-        .select("group_id,user_id,last_read_at")
-        .eq("group_id", groupId);
-
-      if (!cancelled) {
-        setReads((data ?? []) as GroupRead[]);
-      }
-    };
-
-    void loadReads();
-
     const channel = supabase
-      .channel(`group-${groupId}`, {
-        config: {
-          broadcast: {
-            self: false,
-          },
-        },
-      })
-      .on("broadcast", { event: "msg" }, ({ payload }) => {
-        const m = {
-          ...(payload as GroupMessage),
-          created_at: new Date().toISOString(),
-        };
-
-        setMessages((prev) =>
-          prev.some((x) => x.id === m.id)
-            ? prev
-            : [...prev, m],
-        );
-      })
-      .on("broadcast", { event: "del" }, ({ payload }) => {
-        const id = (payload as { id?: string })?.id;
-
-        if (!id) return;
-
-        setMessages((prev) =>
-          prev.filter((x) => x.id !== id),
-        );
-      })
+      .channel(`group-live:${groupId}`)
       .on(
         "postgres_changes",
         {
@@ -311,16 +258,26 @@ function GroupChatPage() {
           filter: `group_id=eq.${groupId}`,
         },
         (payload) => {
-          const m = payload.new as GroupMessage;
-
-          setMessages((prev) =>
-            prev.some((x) => x.id === m.id)
-              ? prev
-              : [...prev, m],
-          );
+          const newMsg = payload.new as GroupMessage;
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === newMsg.id)) return prev;
+            return [...prev, newMsg];
+          });
         },
       )
-      // 削除は直接通知（del）で反映。全ルーム分の削除通知は受け取らない
+      .on(
+        "postgres_changes",
+        {
+          event: "DELETE",
+          schema: "public",
+          table: "group_messages",
+          filter: `group_id=eq.${groupId}`,
+        },
+        (payload) => {
+          const oldMsg = payload.old as { id: string };
+          setMessages((prev) => prev.filter((m) => m.id !== oldMsg.id));
+        },
+      )
       .on(
         "postgres_changes",
         {
@@ -330,429 +287,233 @@ function GroupChatPage() {
           filter: `group_id=eq.${groupId}`,
         },
         () => {
-          void loadReads();
+          void supabase
+            .from("group_reads")
+            .select("*")
+            .eq("group_id", groupId)
+            .then(({ data }) => {
+              if (data) setReads(data as GroupRead[]);
+            });
         },
       )
+      .on("broadcast", { event: "msg" }, (event) => {
+        const incoming = event.payload as GroupMessage;
+        if (!incoming || incoming.group_id !== groupId) return;
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === incoming.id)) return prev;
+          return [...prev, incoming];
+        });
+      })
       .subscribe();
 
     liveRef.current = channel;
+
+    void supabase.from("group_reads").upsert(
+      {
+        group_id: groupId,
+        user_id: user.id,
+        last_read_at: new Date().toISOString(),
+      },
+      { onConflict: "group_id,user_id" },
+    );
 
     return () => {
       cancelled = true;
       liveRef.current = null;
       void supabase.removeChannel(channel);
     };
-  }, [user, groupId, loadMembers]);
-
-  // トークを開いている間は既読を更新する
-  useEffect(() => {
-    if (!user) return;
-
-    void supabase
-      .from("group_reads")
-      .upsert(
-        {
-          group_id: groupId,
-          user_id: user.id,
-          last_read_at: new Date().toISOString(),
-        },
-        {
-          onConflict: "group_id,user_id",
-        },
-      );
-  }, [user, groupId, messages.length]);
+  }, [groupId, user, loadMembers]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({
-      behavior: "smooth",
-    });
-  }, [messages]);
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages.length]);
 
-  // 引用元のメッセージまでスクロールして一瞬光らせる
-  const jumpTo = (id: string) => {
-    const el = document.getElementById(`msg-${id}`);
+  const send = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!text.trim() || !user) return;
 
-    if (!el) {
-      toast("元のメッセージは古いため表示できません");
-      return;
-    }
-
-    el.scrollIntoView({
-      behavior: "smooth",
-      block: "center",
-    });
-
-    setHighlightId(id);
-
-    window.setTimeout(() => {
-      setHighlightId(null);
-    }, 1600);
-  };
-
-  const send = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    const content = text.trim();
-
-    if (!content || !user) return;
-
-    // 最大500文字
-    if (content.length > 500) {
-      toast.error(
-        "メッセージは500文字以内で入力してください",
-      );
-      return;
-    }
+    const raw = text.trim();
+    const content = maskProfanity(raw);
     const now = Date.now();
 
-    // 日本時間 深夜帯（1:00〜6:00）のレート制限
-    if (isLateNightJST()) {
-      if (now - (sendHistoryRef.current[sendHistoryRef.current.length - 1] || 0) < 3000) {
-        toast("深夜帯はサーバー保護のため、3秒間隔での送信になります");
+    if (now < blockedUntilRef.current) {
+      const waitSec = Math.ceil((blockedUntilRef.current - now) / 1000);
+      toast.error(`少し待ってから送信してください（残り ${waitSec} 秒）`);
+      return;
+    }
+
+    if (now - lastSendTimeRef.current < 400) {
+      toast.error("送信の間隔が短すぎます");
+      return;
+    }
+
+    if (hasAbnormalCharacterFlood(raw)) {
+      blockedUntilRef.current = now + 15000;
+      toast.error("メッセージの送信を一時制限しました");
+      return;
+    }
+
+    if (now - sameContentWindowRef.current > 12000) {
+      sameContentWindowRef.current = now;
+      sameContentCountRef.current = 1;
+      lastContentRef.current = raw;
+    } else if (lastContentRef.current === raw) {
+      sameContentCountRef.current += 1;
+      if (sameContentCountRef.current >= 4) {
+        blockedUntilRef.current = now + 30000;
+        toast.error("同じメッセージの連続送信を検知しました");
         return;
       }
-    }
-   
-
-    // 異常な高速連投による一時停止中
-    if (now < blockedUntilRef.current) {
-      const remain = Math.ceil(
-        (blockedUntilRef.current - now) / 1000,
-      );
-
-      toast(
-        `連続送信が多いため、あと${remain}秒ほど待ってください`,
-        {
-          duration: 1800,
-        },
-      );
-
-      return;
-    }
-
-    // 特殊文字・同一文字の異常な繰り返し
-    if (hasAbnormalCharacterFlood(content)) {
-      toast.error(
-        "同じ文字や特殊文字を大量に繰り返すメッセージは送信できません",
-      );
-      return;
-    }
-
-    // 直近5秒間の送信履歴を整理
-    sendHistoryRef.current = sendHistoryRef.current.filter(
-      (time) => now - time <= 5000,
-    );
-
-    // 普通の連続送信は許可。
-    // 5秒以内に8通以上など、明らかな高速連投だけ制限する。
-    if (isBurstSend(sendHistoryRef.current, now)) {
-      blockedUntilRef.current = now + 5000;
-
-      toast(
-        "短時間にたくさん送信されています。少し待ってください",
-        {
-          duration: 2200,
-        },
-      );
-
-      return;
-    }
-
-    // 同じ内容の高速連投だけ検知。
-    if (content === lastContentRef.current) {
-      const elapsed = now - sameContentWindowRef.current;
-
-      if (elapsed <= 10000) {
-        sameContentCountRef.current += 1;
-      } else {
-        sameContentCountRef.current = 1;
-        sameContentWindowRef.current = now;
-      }
     } else {
-      lastContentRef.current = content;
+      lastContentRef.current = raw;
       sameContentCountRef.current = 1;
-      sameContentWindowRef.current = now;
     }
 
-    // 同じ文章を10秒以内に5回以上送った場合だけ制限
-    if (sameContentCountRef.current >= 5) {
-      blockedUntilRef.current = now + 5000;
-      sameContentCountRef.current = 0;
+    sendHistoryRef.current = sendHistoryRef.current
+      .filter((t) => now - t <= 5000)
+      .concat(now);
 
-      toast(
-        "同じメッセージの連続送信が多いため、少し待ってください",
-        {
-          duration: 2200,
-        },
-      );
-
+    if (isBurstSend(sendHistoryRef.current, now)) {
+      blockedUntilRef.current = now + 20000;
+      toast.error("連続送信が早すぎます。少し時間をおいてください");
       return;
     }
 
-    sendHistoryRef.current.push(now);
-
+    lastSendTimeRef.current = now;
+    const currentReply = replyTo;
     setText("");
-
-    const clean = maskProfanity(content);
-    const parentId = replyTo?.id ?? null;
-
     setReplyTo(null);
 
-    if (clean !== content) {
-      toast("不適切な言葉は伏字になります");
-    }
-
-    if (
-      typeof navigator !== "undefined" &&
-      !navigator.onLine
-    ) {
-      enqueueMessage({
-        kind: "group",
-        senderId: user.id,
-        targetId: groupId,
-        content: clean,
-      });
-
-      toast("オフラインのため、つながったら送信します");
-      return;
-    }
-
-    // 先に自分の画面へ表示し、メンバーへも即配信する
+    const tempId = `temp-${now}-${Math.random().toString(36).slice(2, 8)}`;
     const optimistic: GroupMessage = {
-      id: crypto.randomUUID(),
+      id: tempId,
       group_id: groupId,
       sender_id: user.id,
-      content: clean,
+      content,
       image_url: null,
-      media_type: null,
-      created_at: new Date().toISOString(),
-      reply_to_id: parentId,
+      media_type: "text",
+      reply_to_id: currentReply?.id ?? null,
+      created_at: new Date(now).toISOString(),
     };
 
     setMessages((prev) => [...prev, optimistic]);
-
     broadcastMessage(optimistic);
 
-    // 保存は裏で行う
-    const { error } = await supabase
+    const { data: inserted, error } = await supabase
       .from("group_messages")
       .insert({
-        id: optimistic.id,
         group_id: groupId,
         sender_id: user.id,
-        content: clean,
-        reply_to_id: parentId,
-      });
+        content,
+        reply_to_id: currentReply?.id ?? null,
+      })
+      .select()
+      .single();
 
     if (error) {
-      setMessages((prev) =>
-        prev.filter((x) => x.id !== optimistic.id),
-      );
-
+      setMessages((prev) => prev.filter((m) => m.id !== tempId));
       enqueueMessage({
-        kind: "group",
-        senderId: user.id,
+        type: "group",
         targetId: groupId,
-        content: clean,
+        content,
+        replyToId: currentReply?.id ?? null,
       });
-
-      toast(
-        "送信できなかったので、送信待ちに入れました",
-      );
-    }
-  };
-
-  const pickMedia = async (
-    e: React.ChangeEvent<HTMLInputElement>,
-  ) => {
-    const file = e.target.files?.[0];
-
-    e.target.value = "";
-
-    if (!file || !user) return;
-    const isVideo = file.type.startsWith("video/");
-    setUploading(true);
-
-    // 画像の場合、AIによる不適切コンテンツ検査（128x128極小データで判定）
-    if (!isVideo) {
-      try {
-        const thumb = await makeAvatarDataUrl(file);
-        const modResult = await checkProfileAvatarSafety({
-          data: { imageBase64: thumb },
-        });
-        if (!modResult.safe) {
-          setUploading(false);
-          const reasonMsg = modResult.reason
-            ? `不適切な画像が検出されました: ${modResult.reason}`
-            : "利用規約に反する画像が検出されたため、送信できません";
-          toast.error(reasonMsg, { duration: 6000 });
-          return;
-        }
-      } catch (err) {
-        console.warn("AIモデレーションスキップ:", err);
-      }
-    }
-
-    // 画像はアップロード前に自動圧縮
-    const upload = isVideo
-      ? file
-      : await compressImage(file);
-
-    const limit = isVideo ? 10 : 5;
-
-    if (upload.size > limit * 1024 * 1024) {
-      setUploading(false);
-
-      toast.error(
-        `${isVideo ? "動画" : "画像"}は${limit}MBまでです`,
-      );
-
+      toast.info("オフラインのため送信待ちキューに保存しました");
       return;
     }
 
-    let finalUrl = "";
+    if (inserted) {
+      setMessages((prev) =>
+        prev.map((m) => (m.id === tempId ? (inserted as GroupMessage) : m)),
+      );
+    }
+  };
 
+  const pickMedia = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
 
-    // 画像はCloudinaryへ直接アップロード（ストレージ転送量ゼロ）
-    if (!isVideo) {
-      const cUrl = await uploadToCloudinary(upload);
-      if (cUrl) {
-        finalUrl = cUrl;
-      }
+    if (isLateNightJST()) {
+      toast.error("深夜1〜6時はサーバー負荷軽減のため画像送信を休止しています");
+      if (fileRef.current) fileRef.current.value = "";
+      return;
     }
 
-    // Cloudinary未設定時または動画の場合は従来のストレージ
-    if (!finalUrl) {
-      const ext =
-        upload.name.split(".").pop() ||
-        (isVideo ? "mp4" : "jpg");
+    setUploading(true);
+    const isVideo = file.type.startsWith("video/");
+    const mediaType = isVideo ? "video" : "image";
 
-      const path = `${user.id}/${crypto.randomUUID()}.${ext}`;
-
-      const { error: upErr } = await supabase.storage
-        .from("chat-images")
-        .upload(path, upload, {
-          contentType: upload.type,
-          cacheControl: "31536000",
-        });
-
-      if (upErr) {
-        setUploading(false);
-        toast.error("アップロードできませんでした");
-        return;
-      }
-      finalUrl = path;
+    const secureUrl = await uploadToCloudinary(file);
+    if (!secureUrl) {
+      setUploading(false);
+      toast.error("画像をアップロードできませんでした");
+      if (fileRef.current) fileRef.current.value = "";
+      return;
     }
 
-    setUploading(false);
-
-    const optimistic: GroupMessage = {
-      id: crypto.randomUUID(),
+    const { error } = await supabase.from("group_messages").insert({
       group_id: groupId,
       sender_id: user.id,
       content: "",
-      image_url: finalUrl,
-      media_type: isVideo ? "video" : "image",
-      created_at: new Date().toISOString(),
-    };
+      image_url: secureUrl,
+      media_type: mediaType,
+      reply_to_id: replyTo?.id ?? null,
+    });
 
-    setMessages((prev) => [
-      ...prev,
-      optimistic,
-    ]);
+    setUploading(false);
+    setReplyTo(null);
+    if (fileRef.current) fileRef.current.value = "";
 
-    broadcastMessage(optimistic);
-
-    void supabase
-      .from("group_messages")
-      .insert({
-        id: optimistic.id,
-        group_id: groupId,
-        sender_id: user.id,
-        content: "",
-        image_url: finalUrl, // ← finalUrl に変更
-        media_type: isVideo ? "video" : "image",
-      })
-      .then(({ error }) => {
-        if (error) {
-          setMessages((prev) =>
-            prev.filter(
-              (x) => x.id !== optimistic.id,
-            ),
-          );
-
-          toast.error("送信できませんでした");
-        }
-      });
-  };
-
-  const handleDelete = async (
-    m: GroupMessage,
-  ) => {
-    const isOwn = m.sender_id === user?.id;
-
-    const confirmMsg = isOwn
-      ? "このメッセージを取り消します。元に戻せません。よろしいですか？"
-      : "【管理者権限】このメッセージを削除します。参加者全員の画面から削除されます。よろしいですか？";
-
-    if (!window.confirm(confirmMsg)) return;
-
-    try {
-      await deleteGroupMessage({
-        data: {
-          messageId: m.id,
-          groupId,
-        },
-      });
-
-      if (m.image_url) {
-        forgetMediaUrl(m.image_url);
-      }
-
-      if (replyTo?.id === m.id) {
-        setReplyTo(null);
-      }
-
-      setMessages((prev) =>
-        prev
-          .filter((x) => x.id !== m.id)
-          .map((x) =>
-            x.reply_to_id === m.id
-              ? {
-                  ...x,
-                  reply_to_id: null,
-                }
-              : x,
-          ),
-      );
-
-      void liveRef.current?.send({
-        type: "broadcast",
-        event: "del",
-        payload: {
-          id: m.id,
-        },
-      });
-
-      toast.success(
-        isOwn
-          ? "取り消しました"
-          : "メッセージを削除しました",
-      );
-    } catch (err: any) {
-      toast.error(
-        err?.message ||
-          "削除できませんでした",
-      );
+    if (error) {
+      toast.error("送信できませんでした");
     }
   };
 
-  const backTo = group?.is_open
-    ? "/open"
-    : "/groups";
+  const handleDelete = async (msg: GroupMessage) => {
+    const mine = msg.sender_id === user?.id;
+    if (!mine && !isOwner) return;
+
+    setMessages((prev) => prev.filter((m) => m.id !== msg.id));
+    if (msg.image_url) forgetMediaUrl(msg.image_url);
+
+    if (mine) {
+      const { error } = await supabase
+        .from("group_messages")
+        .delete()
+        .eq("id", msg.id);
+      if (error) toast.error("送信取消できませんでした");
+      return;
+    }
+
+    const res = await deleteGroupMessage({ data: { messageId: msg.id } });
+    if (!res.ok) {
+      toast.error("削除できませんでした");
+    }
+  };
+
+  const jumpTo = (id: string) => {
+    const el = document.getElementById(`msg-${id}`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      setHighlightId(id);
+      setTimeout(() => setHighlightId(null), 2000);
+    } else {
+      toast.info("メッセージが見つかりません");
+    }
+  };
+
+  const backTo = group?.is_open ? "/open" : "/groups";
 
   const leave = async () => {
     if (!user || isOwner) return;
+
+    const myName = members.find((m) => m.id === user.id)?.display_name || "メンバー";
+    void supabase.from("group_messages").insert({
+      group_id: groupId,
+      sender_id: user.id,
+      content: `${myName}さんが退出しました`,
+      media_type: "system",
+    });
 
     const { error } = await supabase
       .from("group_members")
@@ -772,75 +533,59 @@ function GroupChatPage() {
       .eq("user_id", user.id);
 
     toast.success(
-      group?.is_open
-        ? "ルームを退出しました"
-        : "グループを退出しました",
+      group?.is_open ? "ルームを退出しました" : "グループを退出しました",
     );
-
-    void navigate({
-      to: backTo,
-    });
+    void navigate({ to: backTo });
   };
 
   const deleteGroup = async () => {
     if (!user || !isOwner) return;
 
-    const { error } = await supabase
-      .from("groups")
-      .delete()
-      .eq("id", groupId);
-
+    const { error } = await supabase.from("groups").delete().eq("id", groupId);
     if (error) {
       toast.error("削除できませんでした");
       return;
     }
 
     toast.success(
-      group?.is_open
-        ? "ルームを削除しました"
-        : "グループを削除しました",
+      group?.is_open ? "ルームを削除しました" : "グループを削除しました",
     );
-
-    void navigate({
-      to: backTo,
-    });
+    void navigate({ to: backTo });
   };
 
   if (loading) return null;
 
   return (
-    <div className="mx-auto flex h-screen w-full max-w-lg flex-col bg-chat">
-      <header className="flex items-center gap-2 border-b border-border bg-background/95 px-3 py-3 backdrop-blur">
+    <div
+      className={cn(
+        "mx-auto flex h-screen w-full max-w-lg flex-col",
+        isLineTheme ? "bg-[#849ebf]" : "bg-chat",
+      )}
+    >
+      <header
+        className={cn(
+          "flex items-center gap-2 border-b px-3 py-3 backdrop-blur",
+          isLineTheme
+            ? "border-white/15 bg-[#849ebf]/95 text-white"
+            : "border-border bg-background/95 text-foreground",
+        )}
+      >
         <Button
           asChild
           variant="ghost"
           size="icon"
           aria-label="戻る"
+          className={isLineTheme ? "text-white hover:bg-white/10" : ""}
         >
-          <Link
-            to={
-              group?.is_open
-                ? "/open"
-                : "/groups"
-            }
-          >
+          <Link to={group?.is_open ? "/open" : "/groups"}>
             <ArrowLeft className="size-5" />
           </Link>
         </Button>
 
-        <Avatar className="size-9">
-          <AvatarImage
-            src={
-              group?.avatar_url ??
-              undefined
-            }
-            alt={group?.name ?? ""}
-          />
-
+        <Avatar className="size-9 shrink-0 shadow-sm">
+          <AvatarImage src={group?.avatar_url ?? undefined} alt={group?.name} />
           <AvatarFallback className="bg-brand-gradient text-xs text-primary-foreground">
-            {initials(
-              group?.name ?? "?",
-            )}
+            {initials(group?.name ?? "?")}
           </AvatarFallback>
         </Avatar>
 
@@ -848,46 +593,49 @@ function GroupChatPage() {
           <span className="block truncate font-semibold leading-tight">
             {group?.name ?? "..."}
           </span>
-
-          <span className="block text-[11px] leading-tight text-muted-foreground">
-            {group?.is_open
-              ? "オープンチャット・"
-              : ""}
-            メンバー {members.length} 人
+          <span
+            className={cn(
+              "block text-[11px] leading-tight",
+              isLineTheme ? "text-white/70" : "text-muted-foreground",
+            )}
+          >
+            {members.length}人のメンバー
           </span>
         </span>
 
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="ルーム通話（音声）"
-          disabled={inThisCall}
-          onClick={() =>
-            void joinCall(
-              groupId,
-              group?.name ?? "ルーム",
-              false,
-            )
-          }
-        >
-          <Phone className="size-5" />
-        </Button>
-
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="ルーム通話（ビデオ）"
-          disabled={inThisCall}
-          onClick={() =>
-            void joinCall(
-              groupId,
-              group?.name ?? "ルーム",
-              true,
-            )
-          }
-        >
-          <Video className="size-5" />
-        </Button>
+        {inThisCall ? (
+          <span className="flex items-center gap-1 rounded-full bg-emerald-500/20 px-2.5 py-1 text-xs font-semibold text-emerald-400">
+            <span className="size-2 animate-pulse rounded-full bg-emerald-400" />
+            通話中
+          </span>
+        ) : (
+          <div className="flex items-center gap-0.5">
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="音声通話を開始"
+              title="音声通話を開始"
+              className={isLineTheme ? "text-white hover:bg-white/10" : ""}
+              onClick={() =>
+                void joinCall(groupId, group?.name ?? "ルーム", false)
+              }
+            >
+              <Phone className="size-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="ビデオ通話を開始"
+              title="ビデオ通話を開始"
+              className={isLineTheme ? "text-white hover:bg-white/10" : ""}
+              onClick={() =>
+                void joinCall(groupId, group?.name ?? "ルーム", true)
+              }
+            >
+              <Video className="size-4" />
+            </Button>
+          </div>
+        )}
 
         <GroupSettingsDialog
           groupId={groupId}
@@ -905,227 +653,198 @@ function GroupChatPage() {
 
       <div className="flex-1 space-y-2 overflow-y-auto px-4 py-4">
         {messages.length === 0 && (
-          <p className="py-10 text-center text-sm text-foreground/50">
+          <p
+            className={cn(
+              "py-10 text-center text-sm",
+              isLineTheme ? "text-white/70" : "text-foreground/50",
+            )}
+          >
             最初のメッセージを送ってみましょう
           </p>
         )}
 
-        {messages.map((m) => {
-          const mine =
-            m.sender_id === user?.id;
+        {messages.map((m, index) => {
+          const mine = m.sender_id === user?.id;
+          const sender = members.find((p) => p.id === m.sender_id);
+          const prev = index > 0 ? messages[index - 1] : null;
+          const showDatePill =
+            !prev || !isSameDay(prev.created_at, m.created_at);
 
-          const sender = members.find(
-            (p) => p.id === m.sender_id,
-          );
-
-          const readCount =
-            reads.filter(
-              (r) =>
-                r.user_id !==
-                  m.sender_id &&
-                new Date(
-                  r.last_read_at,
-                ) >=
-                  new Date(
-                    m.created_at,
-                  ),
-            ).length;
+          const datePillNode = showDatePill ? (
+            <div className="my-3 flex justify-center">
+              <span className="rounded-full bg-black/25 px-3 py-1 text-xs font-medium text-white shadow-sm backdrop-blur-sm">
+                {formatDatePill(m.created_at)}
+              </span>
+            </div>
+          ) : null;
 
           if (
-            m.media_type ===
-            "call_start"
+            m.media_type === "system" ||
+            m.media_type === "system_join" ||
+            m.media_type === "system_leave"
           ) {
             return (
-              <div
-                key={m.id}
-                className="flex justify-center py-1"
-              >
-                <button
-                  type="button"
-                  onClick={() =>
-                    void joinCall(
-                      groupId,
-                      group?.name ??
-                        "ルーム",
-                      m.content ===
-                        "video",
-                    )
-                  }
-                  className="flex items-center gap-2 rounded-full bg-background/90 px-4 py-2 text-xs font-semibold text-foreground shadow-soft"
-                >
-                  {m.content ===
-                  "video" ? (
-                    <Video className="size-4" />
-                  ) : (
-                    <Phone className="size-4" />
-                  )}
-
-                  {sender?.display_name ??
-                    "メンバー"}{" "}
-                  さんが
-                  {m.content ===
-                  "video"
-                    ? "ビデオ"
-                    : "音声"}
-                  通話を開始・
-                  <span className="text-primary">
-                    参加する
-                  </span>
-
-                  <span className="font-normal text-foreground/50">
-                    {formatTime(
-                      m.created_at,
+              <div key={m.id} className="space-y-1">
+                {datePillNode}
+                <div className="flex justify-center py-1">
+                  <span
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-full px-3.5 py-1 text-[11px] font-medium shadow-sm backdrop-blur-sm",
+                      isLineTheme
+                        ? "bg-black/25 text-white"
+                        : "bg-muted/80 text-muted-foreground",
                     )}
+                  >
+                    <span className="font-mono opacity-75">
+                      {formatTime(m.created_at)}
+                    </span>
+                    <span>{m.content}</span>
                   </span>
-                </button>
+                </div>
               </div>
             );
           }
 
-          const parent =
-            m.reply_to_id
-              ? messages.find(
-                  (x) =>
-                    x.id ===
-                    m.reply_to_id,
-                )
-              : null;
+          if (m.media_type === "call_start") {
+            return (
+              <div key={m.id} className="space-y-1">
+                {datePillNode}
+                <div className="flex justify-center py-1">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void joinCall(
+                        groupId,
+                        group?.name ?? "ルーム",
+                        m.content === "video",
+                      )
+                    }
+                    className="flex items-center gap-2 rounded-full bg-background/90 px-4 py-2 text-xs font-semibold text-foreground shadow-soft"
+                  >
+                    {m.content === "video" ? (
+                      <Video className="size-4" />
+                    ) : (
+                      <Phone className="size-4" />
+                    )}
+                    {sender?.display_name ?? "メンバー"} さんが
+                    {m.content === "video" ? "ビデオ" : "音声"}通話を開始・
+                    <span className="text-primary">参加する</span>
+                    <span className="font-normal text-foreground/50">
+                      {formatTime(m.created_at)}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            );
+          }
 
-          const parentSender =
-            parent
-              ? members.find(
-                  (p) =>
-                    p.id ===
-                    parent.sender_id,
-                )
-              : null;
+          const readCount = reads.filter(
+            (r) =>
+              r.user_id !== m.sender_id &&
+              new Date(r.last_read_at) >= new Date(m.created_at),
+          ).length;
 
-          const replyCount =
-            messages.filter(
-              (x) =>
-                x.reply_to_id ===
-                m.id,
-            ).length;
+          const parent = m.reply_to_id
+            ? messages.find((x) => x.id === m.reply_to_id)
+            : null;
+
+          const parentSender = parent
+            ? members.find((p) => p.id === parent.sender_id)
+            : null;
+
+          const replyCount = messages.filter(
+            (x) => x.reply_to_id === m.id,
+          ).length;
 
           return (
-            <div
-              key={m.id}
-              id={`msg-${m.id}`}
-              className={cn(
-                "flex items-end gap-1.5 rounded-2xl transition-colors",
-                mine &&
-                  "flex-row-reverse",
-                highlightId ===
-                  m.id &&
-                  "bg-primary/10",
-              )}
-            >
-              {!mine && (
-                <Link
-                  to="/friend/$friendId"
-                  params={{ friendId: sender?.id ?? "" }}
-                  className="transition-opacity hover:opacity-75"
-                >
-                  <Avatar className="size-7 cursor-pointer">
-                    <AvatarImage
-                      src={sender?.avatar_url ?? undefined}
-                      alt={sender?.display_name ?? ""}
-                    />
-                    <AvatarFallback className="text-[10px]">
-                      {initials(sender?.display_name ?? "?")}
-                    </AvatarFallback>
-                  </Avatar>
-                </Link>
-              )}
-
+            <div key={m.id} className="space-y-1">
+              {datePillNode}
 
               <div
+                id={`msg-${m.id}`}
                 className={cn(
-                  "max-w-[72%]",
-                  mine
-                    ? "items-end"
-                    : "items-start",
+                  "flex items-end gap-1.5 rounded-2xl transition-colors",
+                  mine && "flex-row-reverse",
+                  highlightId === m.id && "bg-primary/10",
                 )}
               >
-                {!mine &&
-                  sender && (
+                {!mine && (
+                  <Link
+                    to="/friend/$friendId"
+                    params={{ friendId: sender?.id ?? "" }}
+                    className="transition-opacity hover:opacity-75"
+                  >
+                    <Avatar className="size-8 cursor-pointer shadow-sm">
+                      <AvatarImage
+                        src={sender?.avatar_url ?? undefined}
+                        alt={sender?.display_name ?? ""}
+                      />
+                      <AvatarFallback className="text-[11px]">
+                        {initials(sender?.display_name ?? "?")}
+                      </AvatarFallback>
+                    </Avatar>
+                  </Link>
+                )}
+
+                <div
+                  className={cn(
+                    "max-w-[72%]",
+                    mine ? "items-end" : "items-start",
+                  )}
+                >
+                  {!mine && sender && (
                     <DropdownMenu>
-                      <DropdownMenuTrigger
-                        asChild
-                      >
-               <button
+                      <DropdownMenuTrigger asChild>
+                        <button
                           type="button"
-                          className="mb-0.5 flex items-center text-left text-[11px] text-foreground/60"
+                          className={cn(
+                            "mb-0.5 flex items-center text-left text-[11px] font-medium transition-opacity hover:opacity-80",
+                            isLineTheme
+                              ? "text-white/90 drop-shadow-sm"
+                              : "text-foreground/70",
+                          )}
                         >
                           <span>{sender.display_name}</span>
                           <StaffBadge userId={sender.id} size={13} />
-
-                          <span className="ml-1 font-mono text-[9px] text-foreground/40">
-                            ID:
-                            {
-                              sender.friend_code
-                            }
+                          <span
+                            className={cn(
+                              "ml-1 font-mono text-[9px]",
+                              isLineTheme
+                                ? "text-white/60"
+                                : "text-foreground/40",
+                            )}
+                          >
+                            ID:{sender.friend_code}
                           </span>
                         </button>
-
                       </DropdownMenuTrigger>
-
                       <DropdownMenuContent align="start">
                         <DropdownMenuLabel className="font-mono text-[11px]">
-                          ID:{" "}
-                          {
-                            sender.friend_code
-                          }
+                          ID: {sender.friend_code}
                         </DropdownMenuLabel>
-
                         <DropdownMenuSeparator />
-
                         <DropdownMenuItem
                           onSelect={async () => {
-                            if (
-                              isBlocked(
-                                sender.id,
-                              )
-                            )
-                              return;
-
-                            if (
-                              await block(
-                                sender.id,
-                              )
-                            ) {
-                              toast.success(
-                                "ブロックしました",
-                              );
+                            if (isBlocked(sender.id)) return;
+                            if (await block(sender.id)) {
+                              toast.success("ブロックしました");
                             }
                           }}
                         >
                           <Ban className="mr-2 size-4" />
-
-                          {isBlocked(
-                            sender.id,
-                          )
+                          {isBlocked(sender.id)
                             ? "ブロック中"
                             : "この人をブロック"}
                         </DropdownMenuItem>
-
                         <ReportDialog
-                          targetId={
-                            sender.id
-                          }
-                          targetName={
-                            sender.display_name
-                          }
-                          targetCode={
-                            sender.friend_code
-                          }
+                          targetId={sender.id}
+                          targetName={sender.display_name}
+                          targetCode={sender.friend_code}
                           context="group"
                           groupId={groupId}
                           trigger={
                             <DropdownMenuItem
-                              onSelect={(e) =>
-                                e.preventDefault()
-                              }
+                              onSelect={(e) => e.preventDefault()}
                             >
                               <Flag className="mr-2 size-4" />
                               この人を通報
@@ -1136,143 +855,138 @@ function GroupChatPage() {
                     </DropdownMenu>
                   )}
 
-                {!mine &&
-                  !sender && (
-                    <p className="mb-0.5 text-[11px] text-foreground/60">
+                  {!mine && !sender && (
+                    <p
+                      className={cn(
+                        "mb-0.5 text-[11px]",
+                        isLineTheme ? "text-white/80" : "text-foreground/60",
+                      )}
+                    >
                       メンバー
                     </p>
                   )}
 
-                {parent && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      jumpTo(
-                        parent.id,
-                      )
-                    }
+                  {parent && (
+                    <button
+                      type="button"
+                      onClick={() => jumpTo(parent.id)}
+                      className={cn(
+                        "mb-1 block w-full max-w-full rounded-xl border-l-2 border-primary/60 bg-background/70 px-2.5 py-1.5 text-left",
+                        mine && "border-l-0 border-r-2",
+                      )}
+                    >
+                      <span className="block truncate text-[10px] font-semibold text-primary">
+                        {parentSender?.display_name ?? "メンバー"} への返信
+                      </span>
+                      <span className="block truncate text-[11px] text-foreground/60">
+                        {parent.image_url
+                          ? parent.media_type === "video"
+                            ? "動画"
+                            : "写真"
+                          : parent.content}
+                      </span>
+                    </button>
+                  )}
+
+                  <div
                     className={cn(
-                      "mb-1 block w-full max-w-full rounded-xl border-l-2 border-primary/60 bg-background/70 px-2.5 py-1.5 text-left",
-                      mine &&
-                        "border-l-0 border-r-2",
+                      "shadow-soft",
+                      m.image_url
+                        ? "overflow-hidden rounded-2xl"
+                        : cn(
+                            "rounded-2xl px-3.5 py-2 text-sm",
+                            isLineTheme
+                              ? mine
+                                ? "rounded-br-sm bg-[#85e24a] text-black"
+                                : "rounded-bl-sm bg-white text-black"
+                              : mine
+                                ? "bubble-out rounded-br-sm"
+                                : "bubble-in rounded-bl-sm",
+                          ),
                     )}
                   >
-                    <span className="block truncate text-[10px] font-semibold text-primary">
-                      {parentSender?.display_name ??
-                        "メンバー"}{" "}
-                      への返信
-                    </span>
+                    {m.image_url ? (
+                      <ChatMedia path={m.image_url} mediaType={m.media_type} />
+                    ) : (
+                      <p className="whitespace-pre-wrap break-words">
+                        {m.content}
+                      </p>
+                    )}
+                  </div>
 
-                    <span className="block truncate text-[11px] text-foreground/60">
-                      {parent.image_url
-                        ? parent.media_type ===
-                          "video"
-                          ? "動画"
-                          : "写真"
-                        : parent.content}
-                    </span>
-                  </button>
-                )}
-
-                <div
-                  className={cn(
-                    "shadow-soft",
-                    m.image_url
-                      ? "overflow-hidden rounded-2xl"
-                      : cn(
-                          "rounded-2xl px-3.5 py-2 text-sm",
-                          mine
-                            ? "bubble-out rounded-br-sm"
-                            : "bubble-in rounded-bl-sm",
-                        ),
-                  )}
-                >
-                  {m.image_url ? (
-                    <ChatMedia
-                      path={m.image_url}
-                      mediaType={
-                        m.media_type
-                      }
-                    />
-                  ) : (
-                    <p className="whitespace-pre-wrap break-words">
-                      {m.content}
+                  {replyCount > 0 && (
+                    <p
+                      className={cn(
+                        "mt-0.5 text-[10px]",
+                        mine ? "text-right" : "",
+                        isLineTheme
+                          ? "font-medium text-white/90 drop-shadow-sm"
+                          : "text-primary",
+                      )}
+                    >
+                      返信 {replyCount} 件
                     </p>
                   )}
                 </div>
 
-                {replyCount > 0 && (
-                  <p
-                    className={cn(
-                      "mt-0.5 text-[10px] text-primary",
-                      mine &&
-                        "text-right",
-                    )}
-                  >
-                    返信{" "}
-                    {replyCount} 件
-                  </p>
-                )}
-              </div>
+                <span
+                  className={cn(
+                    "mb-1 flex flex-col text-[10px]",
+                    mine ? "items-end" : "items-start",
+                    isLineTheme
+                      ? "text-white/85 drop-shadow-sm"
+                      : "text-foreground/50",
+                  )}
+                >
+                  {readCount > 0 && (
+                    <span
+                      className={cn(
+                        isLineTheme
+                          ? "font-medium text-white/90"
+                          : "text-foreground/60",
+                      )}
+                    >
+                      既読 {readCount}
+                    </span>
+                  )}
+                  {formatTime(m.created_at)}
+                </span>
 
-              <span
-                className={cn(
-                  "mb-1 flex flex-col text-[10px] text-foreground/50",
-                  mine
-                    ? "items-end"
-                    : "items-start",
-                )}
-              >
-                {readCount > 0 && (
-                  <span className="text-foreground/60">
-                    既読 {readCount}
-                  </span>
-                )}
-
-                {formatTime(
-                  m.created_at,
-                )}
-              </span>
-
-              <button
-                type="button"
-                aria-label="このメッセージに返信"
-                onClick={() =>
-                  setReplyTo(m)
-                }
-                className="mb-1 rounded-full p-1 text-foreground/30 transition-colors hover:bg-foreground/10 hover:text-primary"
-              >
-                <Reply className="size-3.5" />
-              </button>
-
-              {(mine ||
-                isOwner) && (
                 <button
                   type="button"
-                  aria-label={
-                    mine
-                      ? "送信を取り消す"
-                      : "メッセージを削除"
-                  }
-                  title={
-                    mine
-                      ? "送信を取り消す"
-                      : "管理者として削除"
-                  }
-                  onClick={() =>
-                    void handleDelete(
-                      m,
-                    )
-                  }
-                  className="mb-1 rounded-full p-1 text-foreground/30 transition-colors hover:bg-foreground/10 hover:text-destructive"
-                >
-                  {mine ? (
-                    <Undo2 className="size-3.5" />
-                  ) : (
-                    <Trash2 className="size-3.5 text-destructive/70 hover:text-destructive" />
+                  aria-label="このメッセージに返信"
+                  onClick={() => setReplyTo(m)}
+                  className={cn(
+                    "mb-1 rounded-full p-1 transition-colors",
+                    isLineTheme
+                      ? "text-white/60 hover:bg-white/10 hover:text-white"
+                      : "text-foreground/30 hover:bg-foreground/10 hover:text-primary",
                   )}
+                >
+                  <Reply className="size-3.5" />
                 </button>
-              )}
+
+                {(mine || isOwner) && (
+                  <button
+                    type="button"
+                    aria-label={mine ? "送信を取り消す" : "メッセージを削除"}
+                    title={mine ? "送信を取り消す" : "管理者として削除"}
+                    onClick={() => void handleDelete(m)}
+                    className={cn(
+                      "mb-1 rounded-full p-1 transition-colors",
+                      isLineTheme
+                        ? "text-white/60 hover:bg-white/10 hover:text-destructive"
+                        : "text-foreground/30 hover:bg-foreground/10 hover:text-destructive",
+                    )}
+                  >
+                    {mine ? (
+                      <Undo2 className="size-3.5" />
+                    ) : (
+                      <Trash2 className="size-3.5 text-destructive/70 hover:text-destructive" />
+                    )}
+                  </button>
+                )}
+              </div>
             </div>
           );
         })}
@@ -1283,36 +997,26 @@ function GroupChatPage() {
       {replyTo && (
         <div className="flex items-center gap-2 border-t border-border bg-muted/60 px-3 py-2">
           <Reply className="size-4 shrink-0 text-primary" />
-
           <div className="min-w-0 flex-1">
             <p className="text-[11px] font-semibold text-primary">
-              {members.find(
-                (p) =>
-                  p.id ===
-                  replyTo.sender_id,
-              )?.display_name ??
+              {members.find((p) => p.id === replyTo.sender_id)?.display_name ??
                 "メンバー"}{" "}
               さんに返信
             </p>
-
             <p className="truncate text-xs text-muted-foreground">
               {replyTo.image_url
-                ? replyTo.media_type ===
-                  "video"
+                ? replyTo.media_type === "video"
                   ? "動画"
                   : "画像"
                 : replyTo.content}
             </p>
           </div>
-
           <Button
             type="button"
             variant="ghost"
             size="icon"
             aria-label="返信をやめる"
-            onClick={() =>
-              setReplyTo(null)
-            }
+            onClick={() => setReplyTo(null)}
           >
             <X className="size-4" />
           </Button>
@@ -1321,7 +1025,12 @@ function GroupChatPage() {
 
       <form
         onSubmit={send}
-        className="flex items-center gap-2 border-t border-border bg-background/95 px-3 py-3 backdrop-blur"
+        className={cn(
+          "flex items-center gap-2 border-t px-3 py-3 backdrop-blur",
+          isLineTheme
+            ? "border-white/15 bg-[#849ebf]/95"
+            : "border-border bg-background/95",
+        )}
       >
         <input
           ref={fileRef}
@@ -1337,26 +1046,29 @@ function GroupChatPage() {
           size="icon"
           aria-label="画像・動画を送信"
           disabled={uploading}
-          onClick={() =>
-            fileRef.current?.click()
-          }
+          className={isLineTheme ? "text-white hover:bg-white/10" : ""}
+          onClick={() => fileRef.current?.click()}
         >
           <ImagePlus className="size-5" />
         </Button>
 
         <Input
           value={text}
-          onChange={(e) =>
-            setText(e.target.value)
-          }
+          onChange={(e) => setText(e.target.value)}
           placeholder="メッセージを入力"
-          className="rounded-full"
+          className={cn(
+            "rounded-full",
+            isLineTheme && "border-white/20 bg-white/95 text-black placeholder:text-black/50",
+          )}
         />
 
         <Button
           type="submit"
           size="icon"
-          className="rounded-full"
+          className={cn(
+            "rounded-full",
+            isLineTheme && "bg-[#06C755] text-white hover:bg-[#05b34c]",
+          )}
           aria-label="送信"
         >
           <Send className="size-4" />
@@ -1384,569 +1096,481 @@ function GroupSettingsDialog({
   onDeleteGroup: () => void;
 }) {
   const { user } = useAuth();
-
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
-  const [description, setDescription] =
-    useState("");
-  const [approval, setApproval] =
-    useState(true);
+  const [description, setDescription] = useState("");
+  const [isOpenRoom, setIsOpenRoom] = useState(false);
+  const [requiresApproval, setRequiresApproval] = useState(false);
+  const [isAdult, setIsAdult] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-  const [friends, setFriends] =
-    useState<Profile[]>([]);
-  const [requests, setRequests] =
-    useState<JoinRequest[]>([]);
-  const [requesters, setRequesters] =
-    useState<Record<string, Profile>>(
-      {},
-    );
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
 
-  const isOpenRoom =
-    !!group?.is_open;
+  const [friends, setFriends] = useState<Profile[]>([]);
+  const [loadingFriends, setLoadingFriends] = useState(false);
 
-  useEffect(() => {
-    setName(group?.name ?? "");
-    setDescription(
-      group?.description ?? "",
-    );
-    setApproval(
-      group?.requires_approval ??
-        true,
-    );
-  }, [
-    group?.name,
-    group?.description,
-    group?.requires_approval,
-  ]);
+  const [requests, setRequests] = useState<JoinRequest[]>([]);
+  const [requestUsers, setRequestUsers] = useState<Record<string, Profile>>({});
+  const [loadingRequests, setLoadingRequests] = useState(false);
+
+  const copyInvite = () => {
+    const url = `${window.location.origin}/open?join=${groupId}`;
+    void navigator.clipboard.writeText(url);
+    toast.success("招待リンクをコピーしました");
+  };
 
   useEffect(() => {
-    if (
-      !open ||
-      !user ||
-      isOpenRoom
-    )
-      return;
+    if (open && group) {
+      setName(group.name);
+      setDescription(group.description ?? "");
+      setIsOpenRoom(group.is_open);
+      setRequiresApproval(group.requires_approval);
+      setIsAdult(group.is_adult);
+      setAvatarPreview(group.avatar_url ?? null);
+    }
+  }, [open, group]);
 
-    void (async () => {
-      const { data: rows } =
-        await supabase
-          .from("friendships")
-          .select("friend_id")
-          .eq(
-            "user_id",
-            user.id,
-          );
+  useEffect(() => {
+    if (!open || !user) return;
+    let cancelled = false;
 
-      const ids = (rows ?? []).map(
-        (r) => r.friend_id,
-      );
+    const loadFriends = async () => {
+      setLoadingFriends(true);
+      const { data: rows } = await supabase
+        .from("friendships")
+        .select("friend_id")
+        .eq("user_id", user.id);
 
-      if (ids.length === 0) {
-        setFriends([]);
-        return;
-      }
-
-      const { data } =
-        { data: await fetchProfiles(ids) };
-
-      setFriends(
-        (data ?? []) as Profile[],
-      );
-    })();
-  }, [
-    open,
-    user,
-    isOpenRoom,
-  ]);
-
-  const loadRequests =
-    useCallback(async () => {
-      if (
-        !isOwner ||
-        !isOpenRoom
-      ) {
-        setRequests([]);
-        return;
-      }
-
-      const { data } =
-        await supabase
-          .from("group_join_requests")
-          .select("*")
-          .eq(
-            "group_id",
-            groupId,
-          )
-          .eq(
-            "status",
-            "pending",
-          )
-          .order(
-            "created_at",
-            {
-              ascending: true,
-            },
-          )
-          .limit(100);
-
-      const list =
-        (data ?? []) as JoinRequest[];
-
-      setRequests(list);
-
-      const ids = Array.from(
-        new Set(
-          list.map(
-            (r) => r.user_id,
-          ),
-        ),
-      );
+      const ids = (rows ?? [])
+        .map((r) => r.friend_id)
+        .filter((id) => !members.some((m) => m.id === id));
 
       if (ids.length === 0) {
-        setRequesters({});
+        if (!cancelled) {
+          setFriends([]);
+          setLoadingFriends(false);
+        }
         return;
       }
 
-      const { data: profs } =
-        { data: await fetchProfiles(ids) };
+      const { data } = { data: await fetchProfiles(ids) };
+      if (!cancelled) {
+        setFriends((data ?? []) as Profile[]);
+        setLoadingFriends(false);
+      }
+    };
 
-      const map: Record<
-        string,
-        Profile
-      > = {};
+    void loadFriends();
 
-      for (const p of (profs ??
-        []) as Profile[]) {
+    const loadRequests = async () => {
+      if (!isOwner) return;
+      setLoadingRequests(true);
+      const { data } = await supabase
+        .from("group_join_requests")
+        .select("*")
+        .eq("group_id", groupId)
+        .order("created_at", { ascending: false });
+
+      if (cancelled) return;
+      const reqList = (data ?? []) as JoinRequest[];
+      setRequests(reqList);
+
+      const ids = Array.from(new Set(reqList.map((r) => r.user_id)));
+      if (ids.length === 0) {
+        setRequestUsers({});
+        setLoadingRequests(false);
+        return;
+      }
+
+      const { data: profs } = { data: await fetchProfiles(ids) };
+      if (cancelled) return;
+
+      const map: Record<string, Profile> = {};
+      for (const p of profs ?? []) {
         map[p.id] = p;
       }
+      setRequestUsers(map);
+      setLoadingRequests(false);
+    };
 
-      setRequesters(map);
-    }, [
-      groupId,
-      isOwner,
-      isOpenRoom,
-    ]);
+    void loadRequests();
 
-  useEffect(() => {
-    if (open) {
-      void loadRequests();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, user, members, isOwner, groupId]);
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isOwner || !name.trim()) return;
+
+    setSaving(true);
+    const { data, error } = await supabase
+      .from("groups")
+      .update({
+        name: name.trim(),
+        description: description.trim() || null,
+        is_open: isOpenRoom,
+        requires_approval: requiresApproval,
+        is_adult: isAdult,
+      })
+      .eq("id", groupId)
+      .select()
+      .single();
+
+    setSaving(false);
+    if (error) {
+      toast.error("保存できませんでした");
+      return;
     }
-  }, [
-    open,
-    loadRequests,
-  ]);
 
-  const saveRoom = async () => {
-    if (!isOwner) return;
+    toast.success("設定を更新しました");
+    onChanged(data as Group);
+  };
 
-    const trimmed =
-      maskProfanity(
-        name.trim(),
-      );
+  const onPickAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !isOwner) return;
 
-    if (!trimmed) return;
+    setAvatarUploading(true);
 
-    const patch = isOpenRoom
-      ? {
-          name: trimmed,
-          description:
-            maskProfanity(
-              description.trim(),
-            ),
-          requires_approval:
-            approval,
-        }
-      : {
-          name: trimmed,
-        };
+    try {
+      const compressed = await compressImage(file, {
+        maxWidth: 256,
+        maxHeight: 256,
+        quality: 0.85,
+        targetBytes: 300 * 1024,
+      });
 
-    const { data, error } =
-      await supabase
+      const safetyDataUrl = await makeAvatarDataUrl(compressed);
+      const check = await checkProfileAvatarSafety({
+        data: { imageBase64: safetyDataUrl },
+      });
+
+      if (!check.safe) {
+        toast.error(check.reason ?? "不適切な画像と判定されたため設定できません");
+        setAvatarUploading(false);
+        if (avatarInputRef.current) avatarInputRef.current.value = "";
+        return;
+      }
+
+      const secureUrl = await uploadToCloudinary(compressed);
+      if (!secureUrl) {
+        toast.error("アップロードに失敗しました");
+        setAvatarUploading(false);
+        if (avatarInputRef.current) avatarInputRef.current.value = "";
+        return;
+      }
+
+      const { data, error } = await supabase
         .from("groups")
-        .update(patch)
+        .update({ avatar_url: secureUrl })
         .eq("id", groupId)
         .select()
         .single();
 
-    if (error) {
-      toast.error(
-        "保存できませんでした",
-      );
-      return;
+      if (error) {
+        toast.error("アイコンを更新できませんでした");
+      } else {
+        setAvatarPreview(secureUrl);
+        toast.success("アイコンを更新しました");
+        onChanged(data as Group);
+      }
+    } catch {
+      toast.error("画像の処理中にエラーが発生しました");
+    } finally {
+      setAvatarUploading(false);
+      if (avatarInputRef.current) avatarInputRef.current.value = "";
     }
-
-    toast.success("保存しました");
-
-    onChanged(
-      data as Group,
-    );
   };
 
-  const review = async (
-    request: JoinRequest,
-    approve: boolean,
-  ) => {
-    const { error } =
-      await supabase.rpc(
-        "approve_join_request",
-        {
-          _request_id:
-            request.id,
-          _approve: approve,
-        },
-      );
+  const review = async (request: JoinRequest, approve: boolean) => {
+    const { error } = await supabase.rpc("approve_join_request", {
+      _request_id: request.id,
+      _approve: approve,
+    });
 
     if (error) {
-      toast.error(
-        error.message.replace(
-          /^.*?:\s*/,
-          "",
-        ),
-      );
+      toast.error("処理できませんでした");
       return;
     }
 
-    toast.success(
-      approve
-        ? "参加を承認しました"
-        : "申請を却下しました",
-    );
+    toast.success(approve ? "参加を承認しました" : "申請を却下しました");
+    setRequests((prev) => prev.filter((r) => r.id !== request.id));
+    if (approve) {
+      onChanged();
+    }
+  };
 
-    void loadRequests();
+  const addMember = async (id: string) => {
+    const { error } = await supabase.from("group_members").insert({
+      group_id: groupId,
+      user_id: id,
+    });
 
+    if (error) {
+      toast.error("追加できませんでした");
+      return;
+    }
+
+    toast.success("招待しました");
+    setFriends((prev) => prev.filter((f) => f.id !== id));
     onChanged();
   };
 
-  const addMember = async (
-    id: string,
-  ) => {
-    const { error } =
-      await supabase
-        .from("group_members")
-        .insert({
-          group_id: groupId,
-          user_id: id,
-        });
+  const removeMember = async (id: string) => {
+    if (!isOwner || id === group?.owner_id) return;
+
+    const { error } = await supabase
+      .from("group_members")
+      .delete()
+      .eq("group_id", groupId)
+      .eq("user_id", id);
 
     if (error) {
-      toast.error(
-        "メンバーを追加できませんでした",
-      );
+      toast.error("退出させられませんでした");
       return;
     }
 
-    toast.success(
-      "メンバーを追加しました",
-    );
-
+    toast.success("メンバーを外しました");
     onChanged();
   };
-
-  const removeMember = async (
-    id: string,
-  ) => {
-    if (
-      !isOwner ||
-      id === group?.owner_id
-    )
-      return;
-
-    const { error } =
-      await supabase
-        .from("group_members")
-        .delete()
-        .eq(
-          "group_id",
-          groupId,
-        )
-        .eq(
-          "user_id",
-          id,
-        );
-
-    if (error) {
-      toast.error(
-        "メンバーを削除できませんでした",
-      );
-      return;
-    }
-
-    toast.success(
-      "メンバーを削除しました",
-    );
-
-    onChanged();
-  };
-
-  const candidates =
-    friends.filter(
-      (f) =>
-        !members.some(
-          (m) => m.id === f.id,
-        ),
-    );
-
-  const dirty =
-    name.trim() !==
-      (group?.name ?? "") ||
-    (isOpenRoom &&
-      (description.trim() !==
-        (group?.description ??
-          "") ||
-        approval !==
-          (group?.requires_approval ??
-            true)));
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={setOpen}
-    >
+    <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label={
-            isOpenRoom
-              ? "ルーム設定"
-              : "グループ設定"
-          }
-        >
+        <Button variant="ghost" size="icon" aria-label="グループ設定">
           <Settings className="size-5" />
         </Button>
       </DialogTrigger>
 
-      <DialogContent className="max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
           <DialogTitle>
-            {isOpenRoom
-              ? "ルーム設定"
-              : "グループ設定"}
+            {isOpenRoom ? "ルーム設定" : "グループ設定"}
           </DialogTitle>
-
           <DialogDescription>
             {isOwner
-              ? isOpenRoom
-                ? "作成者は名前と説明、参加方法の変更と、参加申請の承認ができます。"
-                : "作成者はグループ名の変更とメンバーの削除ができます。"
-              : isOpenRoom
-                ? "このルームの設定変更は作成者のみです。"
-                : "メンバーの追加はどなたでもできます。名前の変更とメンバー削除は作成者のみです。"}
+              ? "アイコンや名前の変更、メンバー管理ができます。"
+              : "メンバーの一覧を確認できます。"}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-2">
-          <p className="text-sm font-semibold">
-            {isOpenRoom
-              ? "ルーム名"
-              : "グループ名"}
-          </p>
+        {isOwner && (
+          <form onSubmit={save} className="space-y-4">
+            <div className="flex items-center gap-4">
+              <Avatar className="size-16">
+                <AvatarImage src={avatarPreview ?? undefined} alt={name} />
+                <AvatarFallback className="bg-brand-gradient text-lg text-primary-foreground">
+                  {initials(name || "?")}
+                </AvatarFallback>
+              </Avatar>
 
-          <Input
-            value={name}
-            onChange={(e) =>
-              setName(e.target.value)
-            }
-            disabled={!isOwner}
-            maxLength={40}
-          />
+              <div>
+                <input
+                  ref={avatarInputRef}
+                  type="file"
+                  accept="image/*"
+                  hidden
+                  onChange={onPickAvatar}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={avatarUploading}
+                  onClick={() => avatarInputRef.current?.click()}
+                >
+                  {avatarUploading ? "確認中..." : "アイコンを変更"}
+                </Button>
+              </div>
+            </div>
 
-          {isOpenRoom && (
-            <>
-              <p className="text-sm font-semibold">
-                説明
-              </p>
+            <div>
+              <label className="text-xs font-semibold text-muted-foreground">
+                {isOpenRoom ? "ルーム名" : "グループ名"}
+              </label>
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                required
+                maxLength={40}
+                className="mt-1"
+              />
+            </div>
 
+            <div>
+              <label className="text-xs font-semibold text-muted-foreground">
+                説明（任意）
+              </label>
               <Textarea
                 value={description}
-                onChange={(e) =>
-                  setDescription(
-                    e.target.value,
-                  )
-                }
-                disabled={!isOwner}
+                onChange={(e) => setDescription(e.target.value)}
                 maxLength={200}
-                placeholder="どんな話をするルームかを書きましょう"
+                rows={2}
+                className="mt-1 resize-none"
               />
+            </div>
 
-              <div className="flex items-center justify-between rounded-2xl bg-muted/60 px-4 py-3">
+            <div className="space-y-3 rounded-xl border border-border/60 bg-muted/30 p-3">
+              <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-semibold">
-                    参加に承認が必要
-                  </p>
-
-                  <p className="text-[11px] text-muted-foreground">
-                    オフにすると誰でもすぐ参加できます
+                  <p className="text-sm font-semibold">オープンチャットにする</p>
+                  <p className="text-xs text-muted-foreground">
+                    だれでも検索から見つけられるようになります
                   </p>
                 </div>
-
                 <Switch
-                  checked={approval}
-                  onCheckedChange={
-                    setApproval
-                  }
-                  disabled={!isOwner}
+                  checked={isOpenRoom}
+                  onCheckedChange={setIsOpenRoom}
                 />
               </div>
-            </>
-          )}
 
-          {isOwner && (
-            <Button
-              className="w-full"
-              onClick={saveRoom}
-              disabled={
-                !name.trim() ||
-                !dirty
-              }
-            >
-              保存
-            </Button>
-          )}
-        </div>
+              {isOpenRoom && (
+                <>
+                  <div className="flex items-center justify-between border-t border-border/40 pt-3">
+                    <div>
+                      <p className="text-sm font-semibold">参加を承認制にする</p>
+                      <p className="text-xs text-muted-foreground">
+                        管理者が承認するまでメッセージは見られません
+                      </p>
+                    </div>
+                    <Switch
+                      checked={requiresApproval}
+                      onCheckedChange={setRequiresApproval}
+                    />
+                  </div>
 
-        {isOwner &&
-          isOpenRoom && (
-            <div className="space-y-2">
-              <p className="text-sm font-semibold">
-                参加申請（
-                {requests.length}）
-              </p>
-
-              {requests.length ===
-              0 ? (
-                <p className="text-xs text-muted-foreground">
-                  承認待ちの申請はありません。
-                </p>
-              ) : (
-                <ul className="divide-y divide-border rounded-xl border border-border">
-                  {requests.map(
-                    (req) => {
-                      const p =
-                        requesters[
-                          req.user_id
-                        ];
-
-                      return (
-                        <li
-                          key={
-                            req.id
-                          }
-                          className="flex items-center gap-2 px-3 py-2"
-                        >
-                          <Avatar className="size-8">
-                            <AvatarImage
-                              src={
-                                p?.avatar_url ??
-                                undefined
-                              }
-                              alt={
-                                p?.display_name ??
-                                ""
-                              }
-                            />
-
-                            <AvatarFallback className="text-[10px]">
-                              {initials(
-                                p?.display_name ??
-                                  "?",
-                              )}
-                            </AvatarFallback>
-                          </Avatar>
-
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-sm">
-                              {p?.display_name ??
-                                "ユーザー"}
-                            </span>
-
-                            <span className="block font-mono text-[10px] text-muted-foreground">
-                              ID:{" "}
-                              {p?.friend_code ??
-                                "········"}
-                            </span>
-                          </span>
-
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label="承認する"
-                            onClick={() =>
-                              void review(
-                                req,
-                                true,
-                              )
-                            }
-                          >
-                            <Check className="size-4 text-primary" />
-                          </Button>
-
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label="却下する"
-                            onClick={() =>
-                              void review(
-                                req,
-                                false,
-                              )
-                            }
-                          >
-                            <X className="size-4 text-destructive" />
-                          </Button>
-                        </li>
-                      );
-                    },
-                  )}
-                </ul>
+                  <div className="flex items-center justify-between border-t border-border/40 pt-3">
+                    <div>
+                      <p className="text-sm font-semibold">🔞 年齢制限ルーム</p>
+                      <p className="text-xs text-muted-foreground">
+                        検索結果に注意ラベルが付きます
+                      </p>
+                    </div>
+                    <Switch
+                      checked={isAdult}
+                      onCheckedChange={setIsAdult}
+                    />
+                  </div>
+                </>
               )}
             </div>
-          )}
 
-        <Button
-          type="button"
-          variant="outline"
-          className="w-full"
-          onClick={() => {
-            const url = group?.is_open
-              ? `${window.location.origin}/open?join=${groupId}`
-              : `${window.location.origin}/group/${groupId}`;
-            void navigator.clipboard.writeText(url);
-            toast.success("招待リンクをコピーしました");
-          }}
-        >
-          <Link2 className="mr-2 size-4" />
-          招待リンクをコピー
-        </Button>
+            <Button
+              type="submit"
+              variant="brand"
+              className="w-full"
+              disabled={saving}
+            >
+              {saving ? "保存中..." : "変更を保存"}
+            </Button>
+          </form>
+        )}
 
-        <div className="space-y-2">
-          <p className="text-sm font-semibold">
-            メンバー（
-            {members.length}）
+        {isOpenRoom && (
+          <div className="rounded-xl border border-border/60 p-3">
+            <p className="text-xs font-semibold text-muted-foreground">
+              招待リンク
+            </p>
+            <div className="mt-1 flex items-center gap-2">
+              <Input
+                readOnly
+                value={`${window.location.origin}/open?join=${groupId}`}
+                className="font-mono text-xs"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                onClick={copyInvite}
+                aria-label="招待リンクをコピー"
+              >
+                <Link2 className="size-4" />
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {isOwner && requiresApproval && (
+          <div className="space-y-2 border-t border-border pt-4">
+            <p className="text-xs font-semibold text-muted-foreground">
+              参加リクエスト ({requests.length})
+            </p>
+
+            {loadingRequests ? (
+              <p className="py-2 text-center text-xs text-muted-foreground">
+                読み込み中...
+              </p>
+            ) : requests.length === 0 ? (
+              <p className="py-2 text-center text-xs text-muted-foreground">
+                リクエストはありません
+              </p>
+            ) : (
+              <ul className="space-y-2">
+                {requests.map((r) => {
+                  const p = requestUsers[r.user_id];
+                  return (
+                    <li
+                      key={r.id}
+                      className="flex items-center gap-2 rounded-lg border border-border/60 p-2"
+                    >
+                      <Avatar className="size-8">
+                        <AvatarImage src={p?.avatar_url ?? undefined} />
+                        <AvatarFallback>
+                          {initials(p?.display_name ?? "?")}
+                        </AvatarFallback>
+                      </Avatar>
+
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm">
+                          {p?.display_name ?? "ユーザー"}
+                        </span>
+                        <span className="block font-mono text-[10px] text-muted-foreground">
+                          ID: {p?.friend_code ?? "..."}
+                        </span>
+                      </span>
+
+                      <Button
+                        size="sm"
+                        variant="brand"
+                        onClick={() => void review(r, true)}
+                      >
+                        <Check className="mr-1 size-3" />
+                        承認
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => void review(r, false)}
+                      >
+                        <X className="mr-1 size-3" />
+                        却下
+                      </Button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        )}
+
+        <div className="space-y-2 border-t border-border pt-4">
+          <p className="text-xs font-semibold text-muted-foreground">
+            メンバー ({members.length})
           </p>
 
-          <ul className="divide-y divide-border rounded-xl border border-border">
+          <ul className="max-h-48 space-y-1 overflow-y-auto">
             {members.map((m) => (
               <li
                 key={m.id}
-                className="flex items-center gap-2 px-3 py-2"
+                className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-muted/40"
               >
                 <Avatar className="size-8">
-                  <AvatarImage
-                    src={
-                      m.avatar_url ??
-                      undefined
-                    }
-                    alt={
-                      m.display_name
-                    }
-                  />
-
-                  <AvatarFallback className="text-[10px]">
-                    {initials(
-                      m.display_name,
-                    )}
-                  </AvatarFallback>
+                  <AvatarImage src={m.avatar_url ?? undefined} />
+                  <AvatarFallback>{initials(m.display_name)}</AvatarFallback>
                 </Avatar>
 
                 <span className="min-w-0 flex-1">
@@ -1954,95 +1578,63 @@ function GroupSettingsDialog({
                     {m.display_name}
                     <StaffBadge userId={m.id} />
                   </span>
-
                   <span className="block font-mono text-[10px] text-muted-foreground">
-                    ID:{" "}
-                    {m.friend_code}
+                    ID: {m.friend_code}
+                    {m.id === group?.owner_id && " ・ 作成者"}
                   </span>
                 </span>
 
-                {group?.owner_id ===
-                m.id ? (
-                  <span className="text-[10px] text-muted-foreground">
-                    作成者
-                  </span>
-                ) : (
-                  isOwner && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label="メンバーを削除"
-                      onClick={() =>
-                        void removeMember(
-                          m.id,
-                        )
-                      }
-                    >
-                      <Trash2 className="size-4 text-destructive" />
-                    </Button>
-                  )
+                {isOwner && m.id !== group?.owner_id && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-xs text-destructive"
+                    onClick={() => void removeMember(m.id)}
+                  >
+                    外す
+                  </Button>
                 )}
               </li>
             ))}
           </ul>
         </div>
 
-        {!isOpenRoom && (
-          <div className="space-y-2">
-            <p className="text-sm font-semibold">
-              友だちを追加
+        {friends.length > 0 && (
+          <div className="space-y-2 border-t border-border pt-4">
+            <p className="text-xs font-semibold text-muted-foreground">
+              友だちを招待
             </p>
 
-            {candidates.length ===
-            0 ? (
-              <p className="text-xs text-muted-foreground">
-                追加できる友だちがいません。
+            {loadingFriends ? (
+              <p className="py-2 text-center text-xs text-muted-foreground">
+                読み込み中...
               </p>
             ) : (
-              <ul className="divide-y divide-border rounded-xl border border-border">
-                {candidates.map(
-                  (f) => (
-                    <li
-                      key={f.id}
-                      className="flex items-center gap-2 px-3 py-2"
+              <ul className="max-h-40 space-y-1 overflow-y-auto">
+                {friends.map((f) => (
+                  <li
+                    key={f.id}
+                    className="flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-muted/40"
+                  >
+                    <Avatar className="size-7">
+                      <AvatarImage src={f.avatar_url ?? undefined} />
+                      <AvatarFallback>{initials(f.display_name)}</AvatarFallback>
+                    </Avatar>
+
+                    <span className="min-w-0 flex-1 truncate text-sm">
+                      {f.display_name}
+                    </span>
+
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => void addMember(f.id)}
                     >
-                      <Avatar className="size-8">
-                        <AvatarImage
-                          src={
-                            f.avatar_url ??
-                            undefined
-                          }
-                          alt={
-                            f.display_name
-                          }
-                        />
-
-                        <AvatarFallback className="text-[10px]">
-                          {initials(
-                            f.display_name,
-                          )}
-                        </AvatarFallback>
-                      </Avatar>
-
-                      <span className="min-w-0 flex-1 truncate text-sm">
-                        {f.display_name}
-                      </span>
-
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() =>
-                          void addMember(
-                            f.id,
-                          )
-                        }
-                      >
-                        <UserPlus className="mr-1 size-4" />
-                        追加
-                      </Button>
-                    </li>
-                  ),
-                )}
+                      <UserPlus className="mr-1 size-3" />
+                      追加
+                    </Button>
+                  </li>
+                ))}
               </ul>
             )}
           </div>
@@ -2052,12 +1644,9 @@ function GroupSettingsDialog({
           <Button
             variant="ghost"
             className="w-full text-destructive"
-            onClick={
-              onDeleteGroup
-            }
+            onClick={onDeleteGroup}
           >
             <Trash2 className="mr-1 size-4" />
-
             {isOpenRoom
               ? "ルームを削除（作成者のみ）"
               : "グループを削除（作成者のみ）"}
@@ -2069,10 +1658,7 @@ function GroupSettingsDialog({
             onClick={onLeave}
           >
             <LogOut className="mr-1 size-4" />
-
-            {isOpenRoom
-              ? "ルームを退出"
-              : "グループを退出"}
+            {isOpenRoom ? "ルームを退出" : "グループを退出"}
           </Button>
         )}
       </DialogContent>
