@@ -255,7 +255,7 @@ export const adminSetBan = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-// 指定ユーザーの投稿をすべて削除
+// 指定ユーザーの投稿をすべて削除（荒らし一網打尽）
 export const adminDeleteUserMessages = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { userId: string }) => input)
@@ -390,13 +390,13 @@ export const adminSearchMessages = createServerFn({ method: "POST" })
         .select("id, sender_id, content, media_type, created_at")
         .ilike("content", `%${q}%`)
         .order("created_at", { ascending: false })
-        .limit(40),
+        .limit(50),
       supabaseAdmin
         .from("group_messages")
         .select("id, sender_id, content, media_type, group_id, created_at")
         .ilike("content", `%${q}%`)
         .order("created_at", { ascending: false })
-        .limit(40),
+        .limit(50),
     ]);
 
     const senderIds = Array.from(
@@ -541,7 +541,7 @@ export const adminRevokeInvitation = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-// 全ユーザー向けアナウンスの公開
+// 全ユーザー向けアナウンスの公開（画面最上部固定）
 export const adminPublishAnnouncement = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { content: string; pollOptions?: string[] }) => input)
@@ -612,29 +612,53 @@ export const voteAnnouncement = createServerFn({ method: "POST" })
     return { pollCounts: [] as number[], hasVotedIndex: data.optionIndex as number | null };
   });
 
-// オープンチャットへの一斉アナウンス送信
-export const adminBroadcastToOpenGroups = createServerFn({ method: "POST" })
+// 【追加】ルームへの一斉通知機能（全オープンチャット または 全ルーム一括）
+export const adminBroadcastToRooms = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { message: string }) => input)
+  .inputValidator(
+    (input: { message: string; target?: "open_only" | "all"; asSystem?: boolean }) => input,
+  )
   .handler(async ({ data, context }) => {
     await assertAdmin(context.supabase as never, context.userId);
     const text = (data.message ?? "").trim();
     if (!text) throw new Error("本文を入力してください");
 
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { data: groups } = await supabaseAdmin.from("groups").select("id").eq("is_open", true);
-    const openGroups = groups ?? [];
-    if (openGroups.length === 0) return { count: 0 };
+    let query = supabaseAdmin.from("groups").select("id");
+    if (data.target !== "all") {
+      query = query.eq("is_open", true);
+    }
+    const { data: groups, error } = await query;
+    if (error) throw new Error("ルーム一覧を取得できませんでした");
+    const targetGroups = groups ?? [];
+    if (targetGroups.length === 0) return { count: 0 };
 
-    const rows = openGroups.map((g) => ({
-      group_id: g.id,
-      sender_id: context.userId,
-      content: `📢【運営アナウンス】\n${text}`,
-      media_type: "text",
-    }));
+    const asSystem = !!data.asSystem;
+    const content = asSystem ? `📢 運営公式通知: ${text}` : `📢【運営アナウンス】\n${text}`;
+    const media_type = asSystem ? "system" : "text";
 
-    await supabaseAdmin.from("group_messages").insert(rows);
-    return { count: rows.length };
+    // 100件ずつ一括挿入（DB負荷軽減とタイムアウト防止）
+    const chunkSize = 100;
+    for (let i = 0; i < targetGroups.length; i += chunkSize) {
+      const chunk = targetGroups.slice(i, i + chunkSize);
+      const rows = chunk.map((g) => ({
+        group_id: g.id,
+        sender_id: context.userId,
+        content,
+        media_type,
+      }));
+      await supabaseAdmin.from("group_messages").insert(rows);
+    }
+
+    return { count: targetGroups.length };
+  });
+
+// 既存コードとの互換性用
+export const adminBroadcastToOpenGroups = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { message: string }) => input)
+  .handler(async ({ data }) => {
+    return adminBroadcastToRooms({ data: { message: data.message, target: "open_only" } });
   });
 
 // 一時ミュート（スタッフ）。minutes=0で解除
