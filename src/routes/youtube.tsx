@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   Menu,
@@ -6,12 +6,9 @@ import {
   Settings,
   Flame,
   Music,
-  Gamepad2,
   Tv,
   X,
-  Bookmark,
   Loader2,
-  MoreVertical,
   ArrowLeft,
   Share2,
   Play,
@@ -20,10 +17,12 @@ import {
   Copy,
   Check,
   LogOut,
-  User,
   ShieldCheck,
   History,
-  FolderHeart,
+  Shield,
+  MessageSquare,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -35,7 +34,7 @@ export const Route = createFileRoute("/youtube")({
   head: () => ({
     meta: [
       { title: "RINETube｜テレビ認証・広告なし動画プレイヤー" },
-      { name: "description", content: "WeTube準拠・テレビ認証対応の軽量YouTubeクライアント「RINETube」" },
+      { name: "description", content: "WeTube準拠・テレビ認証・ショート無限スクロール対応の軽量YouTubeクライアント「RINETube」" },
     ],
   }),
   component: RINETubePage,
@@ -145,7 +144,7 @@ function extractVideoId(text: string): string | null {
   const trimmed = text.trim();
   if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed;
   const match = trimmed.match(
-    /(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/|v\/))([a-zA-Z0-9_-]{11})/
+    /(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/|v\/))([a-zA-Z0-9_-]{11})/,
   );
   return match?.[1] ?? null;
 }
@@ -159,6 +158,15 @@ export default function RINETubePage() {
   const [loading, setLoading] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  // ステルス偽装モード（Google検索画面偽装）
+  const [stealthMode, setStealthMode] = useState(false);
+
+  // ショート動画専用プレイヤー（TikTok風無限スクロール）
+  const [shortsMode, setShortsMode] = useState(false);
+  const [shortsList, setShortsList] = useState<VideoItem[]>([]);
+  const [shortsIndex, setShortsIndex] = useState(0);
+  const [loadingShorts, setLoadingShorts] = useState(false);
 
   // モーダル管理
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -177,23 +185,45 @@ export default function RINETubePage() {
 
   // テレビ認証（WeTube準拠）
   const [account, setAccount] = useState<YouTubeAccount | null>(null);
-  const [authStatus, setAuthStatus] = useState<"signed_out" | "starting" | "pending" | "signed_in" | "error">("signed_out");
+  const [authStatus, setAuthStatus] = useState<
+    "signed_out" | "starting" | "pending" | "signed_in" | "error"
+  >("signed_out");
   const [userCode, setUserCode] = useState("");
   const [verificationUrl, setVerificationUrl] = useState("https://www.youtube.com/activate");
   const [authError, setAuthError] = useState("");
   const [codeCopied, setCodeCopied] = useState(false);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 無限スクロール
+  // 止まらない無限スクロール管理
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const loadingMoreRef = useRef(false);
   const feedModeRef = useRef<"search" | "subs">("search");
   const lastQueryRef = useRef("おすすめ");
-  const pageRef = useRef(0);
+  const pageRef = useRef(1);
   const subsTokenRef = useRef<string | null>(null);
   const searchContRef = useRef<string | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
+
+  // Escキーによるステルス偽装のトグル
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setStealthMode((prev) => !prev);
+      }
+      if (shortsMode) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          nextShort();
+        } else if (e.key === "ArrowUp") {
+          e.preventDefault();
+          prevShort();
+        }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [shortsMode, shortsList.length, shortsIndex]);
 
   // 設定・履歴・アカウントの初期読み込み
   useEffect(() => {
@@ -225,7 +255,6 @@ export default function RINETubePage() {
     } catch {}
   }, []);
 
-  // 設定保存
   const saveSettings = () => {
     localStorage.setItem("rinetube_mode", mode);
     localStorage.setItem("rinetube_invidious_host", invidiousHost);
@@ -247,7 +276,6 @@ export default function RINETubePage() {
     else localStorage.removeItem("rinetube_account_v1");
   };
 
-  // 有効なアクセストークンを取得（期限切れなら自動更新）
   const getToken = async (): Promise<string | null> => {
     const acc = accountRef.current;
     if (!acc?.access_token) return null;
@@ -263,7 +291,6 @@ export default function RINETubePage() {
     }
   };
 
-  // 本物のテレビ認証（Google デバイスコード方式）
   const startTvAuth = async () => {
     if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
     setAuthStatus("starting");
@@ -312,22 +339,17 @@ export default function RINETubePage() {
             );
             return;
           }
-        } catch {
-          /* 通信エラーは次回再試行 */
-        }
+        } catch {}
         pollTimerRef.current = setTimeout(tick, wait);
       };
       pollTimerRef.current = setTimeout(tick, wait);
     } catch (e) {
       setAuthStatus("signed_out");
-      setAuthError(
-        "認証を開始できませんでした。Google側のクライアント種類が「テレビと入力制限のあるデバイス」か確認してください。",
-      );
+      setAuthError("認証を開始できませんでした。");
       console.error(e);
     }
   };
 
-  // 登録チャンネルのおすすめ（無限スクロール対応）
   const loadSubsFeed = async (reset = false) => {
     if (loadingMoreRef.current) return;
     const token = await getToken();
@@ -340,7 +362,7 @@ export default function RINETubePage() {
       });
       feedModeRef.current = "subs";
       subsTokenRef.current = r.nextPageToken;
-      setHasMore(!!r.nextPageToken);
+      setHasMore(true);
       setSelectedCategory("subs");
       setVideos((prev) => {
         const base = reset ? [] : prev;
@@ -375,27 +397,33 @@ export default function RINETubePage() {
     toast.success("ログアウトしました");
   };
 
-  // 動画検索（Invidious経由）
+  // 止まらない無限検索エンジン
   const searchVideos = async (keyword: string, page = 1, append = false) => {
     if (!keyword.trim()) return;
     if (append) {
       if (loadingMoreRef.current) return;
       loadingMoreRef.current = true;
       setLoadingMore(true);
-    } else setLoading(true);
+    } else {
+      setLoading(true);
+    }
     feedModeRef.current = "search";
     lastQueryRef.current = keyword;
     pageRef.current = page;
     if (!append) searchContRef.current = null;
+
     try {
-      // まずはサーバー経由の高速検索（安定・続きの読み込み対応）
+      // 1. YouTube内部検索（continuation優先、切れたらページクエリで自動補給）
+      const queryPayload =
+        append && searchContRef.current
+          ? { continuation: searchContRef.current }
+          : { q: page > 1 ? `${keyword} ${page}` : keyword };
+
       try {
-        const r = await ytSearch({
-          data: append && searchContRef.current ? { continuation: searchContRef.current } : { q: keyword },
-        });
+        const r = await ytSearch({ data: queryPayload });
         if (r.items.length > 0) {
-          searchContRef.current = r.continuation;
-          setHasMore(!!r.continuation);
+          searchContRef.current = r.continuation ?? null;
+          setHasMore(true); // 常に次を読み込めるようにtrueを維持
           setVideos((prev) => {
             const base = append ? prev : [];
             const seen = new Set(base.map((v) => v.id));
@@ -403,29 +431,27 @@ export default function RINETubePage() {
           });
           return;
         }
-      } catch {
-        /* 予備のInvidiousへ */
-      }
-      const hosts = [invidiousHost.replace(/\/+$/, ""), ...FALLBACK_HOSTS.filter((h) => h !== invidiousHost.replace(/\/+$/, ""))];
+      } catch {}
+
+      // 2. 予備のInvidiousホストへ自動フォールバック
+      const hosts = [
+        invidiousHost.replace(/\/+$/, ""),
+        ...FALLBACK_HOSTS.filter((h) => h !== invidiousHost.replace(/\/+$/, "")),
+      ];
       let data: any = null;
       for (const host of hosts) {
         try {
           const res = await fetch(
             `${host}/api/v1/search?q=${encodeURIComponent(keyword)}&type=video&sort_by=relevance&page=${page}`,
-            { signal: AbortSignal.timeout(5000) }
+            { signal: AbortSignal.timeout(5000) },
           );
           if (!res.ok) continue;
           data = await res.json();
-          if (host !== hosts[0]) {
-            setInvidiousHost(host);
-            toast.info(`別の検索サーバーに自動で切り替えました`);
-          }
+          if (host !== hosts[0]) setInvidiousHost(host);
           break;
-        } catch {
-          /* 次のサーバーへ */
-        }
+        } catch {}
       }
-      if (!data) throw new Error("all failed");
+
       if (Array.isArray(data) && data.length > 0) {
         const formatted: VideoItem[] = data.slice(0, 30).map((item: any) => ({
           id: item.videoId,
@@ -443,13 +469,11 @@ export default function RINETubePage() {
           const seen = new Set(base.map((v) => v.id));
           return [...base, ...formatted.filter((v) => v.id && !seen.has(v.id) && seen.add(v.id))];
         });
-      } else {
-        setHasMore(false);
-        if (!append) toast.info("該当する動画が見つかりませんでした");
+      } else if (!append) {
+        toast.info("該当する動画が見つかりませんでした");
       }
     } catch {
-      if (!append) toast.error("検索サーバーに接続できませんでした。別サーバーをお試しください。");
-      else setHasMore(false);
+      if (!append) toast.error("動画サーバーに接続できませんでした。別サーバーをお試しください。");
     } finally {
       setLoading(false);
       if (append) {
@@ -459,13 +483,17 @@ export default function RINETubePage() {
     }
   };
 
-  // 画面の一番下に来たら続きを自動で読み込む
+  // スクロールで止まらず次々と読み込むダブル検知
   const loadMoreRef = useRef<() => void>(() => {});
   loadMoreRef.current = () => {
-    if (loadingMoreRef.current || loading || !hasMore) return;
-    if (feedModeRef.current === "subs") loadSubsFeed(false);
-    else searchVideos(lastQueryRef.current, pageRef.current + 1, true);
+    if (loadingMoreRef.current || loading) return;
+    if (feedModeRef.current === "subs") {
+      loadSubsFeed(false);
+    } else {
+      searchVideos(lastQueryRef.current, pageRef.current + 1, true);
+    }
   };
+
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
@@ -473,15 +501,59 @@ export default function RINETubePage() {
       (entries) => {
         if (entries[0]?.isIntersecting) loadMoreRef.current();
       },
-      { rootMargin: "600px" },
+      { rootMargin: "800px" },
     );
     io.observe(el);
     return () => io.disconnect();
   }, []);
 
-  // ログイン済みなら登録チャンネルのおすすめを最初に表示
   useEffect(() => {
-    if (account?.access_token && feedModeRef.current === "search" && pageRef.current === 0) loadSubsFeed(true);
+    const handleScroll = () => {
+      if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 700) {
+        loadMoreRef.current();
+      }
+    };
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  // ショート動画の読み込み
+  const loadShortsFeed = async (append = false) => {
+    if (loadingShorts) return;
+    setLoadingShorts(true);
+    try {
+      const q = append ? "YouTube Shorts 面白い #Shorts" : "#Shorts 日本 おすすめ";
+      const r = await ytSearch({ data: { q } });
+      if (r.items.length > 0) {
+        setShortsList((prev) => {
+          const base = append ? prev : [];
+          const seen = new Set(base.map((x) => x.id));
+          return [...base, ...r.items.filter((x) => !seen.has(x.id))];
+        });
+      }
+    } catch {}
+    setLoadingShorts(false);
+  };
+
+  const nextShort = () => {
+    if (shortsIndex + 1 >= shortsList.length - 2) {
+      void loadShortsFeed(true);
+    }
+    if (shortsIndex + 1 < shortsList.length) {
+      setShortsIndex((i) => i + 1);
+    }
+  };
+
+  const prevShort = () => {
+    if (shortsIndex > 0) {
+      setShortsIndex((i) => i - 1);
+    }
+  };
+
+  useEffect(() => {
+    if (account?.access_token && feedModeRef.current === "search" && pageRef.current === 1) {
+      loadSubsFeed(true);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account?.access_token]);
 
@@ -500,7 +572,6 @@ export default function RINETubePage() {
     setCurrentVideoTitle(v.title);
     setCurrentAuthor(v.author);
 
-    // 履歴に追加
     setHistory((prev) => {
       const filtered = prev.filter((item) => item.id !== v.id);
       const updated = [v, ...filtered].slice(0, 50);
@@ -520,7 +591,6 @@ export default function RINETubePage() {
     });
   };
 
-  // 再生プレイヤー用URLの構築
   const getPlayerUrl = (id: string) => {
     const ap = autoPlay ? 1 : 0;
     switch (mode) {
@@ -541,6 +611,47 @@ export default function RINETubePage() {
         return `https://www.youtube-nocookie.com/embed/${id}?autoplay=${ap}`;
     }
   };
+
+  // ステルス偽装表示（Google検索画面）
+  if (stealthMode) {
+    return (
+      <div className="min-h-screen bg-white text-black font-sans flex flex-col justify-between p-6 select-none">
+        <div className="flex justify-end gap-4 text-sm text-[#5f6368]">
+          <span>Gmail</span>
+          <span>画像</span>
+          <button
+            type="button"
+            onClick={() => setStealthMode(false)}
+            className="text-xs bg-[#1a73e8] text-white px-3 py-1 rounded"
+          >
+            ログイン
+          </button>
+        </div>
+        <div className="max-w-xl mx-auto w-full text-center space-y-6">
+          <h1 className="text-6xl font-bold tracking-tight text-[#4285f4]">
+            G<span className="text-[#ea4335]">o</span>
+            <span className="text-[#fbbc05]">o</span>
+            <span className="text-[#4285f4]">g</span>
+            <span className="text-[#34a853]">l</span>
+            <span className="text-[#ea4335]">e</span>
+          </h1>
+          <div className="flex items-center border border-[#dfe1e5] rounded-full px-4 py-2.5 shadow-sm hover:shadow-md transition-shadow">
+            <Search className="size-4 text-[#9aa0a6] mr-3" />
+            <input
+              type="text"
+              defaultValue="日本の歴史 年表"
+              className="w-full outline-none text-sm bg-transparent"
+            />
+          </div>
+          <p className="text-xs text-[#70757a]">Escキーを押すと元の画面に戻ります</p>
+        </div>
+        <div className="text-xs text-[#70757a] flex justify-between border-t pt-4">
+          <span>日本</span>
+          <span>プライバシー 規約 設定</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#0f0f0f] text-[#f1f1f1] flex flex-col font-sans selection:bg-red-600 selection:text-white">
@@ -565,39 +676,66 @@ export default function RINETubePage() {
           </Link>
         </div>
 
-        {/* 中央: YouTube風 検索バー */}
-        <form onSubmit={handleSearchSubmit} className="flex-1 max-w-2xl mx-auto flex items-center">
-          <div className="relative w-full flex items-center">
-            <Input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="検索またはYouTubeのURLを貼り付け…"
-              className="w-full bg-[#121212] border-[#303030] focus-visible:border-blue-500 focus-visible:ring-1 focus-visible:ring-blue-500 text-white rounded-l-full rounded-r-none h-10 px-4 text-sm shadow-inner"
-            />
-            {query && (
-              <button
-                type="button"
-                onClick={() => setQuery("")}
-                className="absolute right-3 text-[#aaa] hover:text-white p-1"
-              >
-                <X className="size-4" />
-              </button>
-            )}
-          </div>
-          <Button
-            type="submit"
-            variant="secondary"
-            className="rounded-r-full rounded-l-none bg-[#222] hover:bg-[#272727] border border-l-0 border-[#303030] h-10 px-5 text-[#aaa] hover:text-white shrink-0"
-            disabled={loading}
+        {/* 中央: YouTube風 検索バー ＆ ショート動画ボタン */}
+        <div className="flex-1 max-w-2xl mx-auto flex items-center gap-2">
+          <form onSubmit={handleSearchSubmit} className="flex-1 flex items-center">
+            <div className="relative w-full flex items-center">
+              <Input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="検索またはYouTubeのURLを貼り付け…"
+                className="w-full bg-[#121212] border-[#303030] focus-visible:border-blue-500 focus-visible:ring-1 focus-visible:ring-blue-500 text-white rounded-l-full rounded-r-none h-10 px-4 text-sm shadow-inner"
+              />
+              {query && (
+                <button
+                  type="button"
+                  onClick={() => setQuery("")}
+                  className="absolute right-3 text-[#aaa] hover:text-white p-1"
+                >
+                  <X className="size-4" />
+                </button>
+              )}
+            </div>
+            <Button
+              type="submit"
+              variant="secondary"
+              className="rounded-r-full rounded-l-none bg-[#222] hover:bg-[#272727] border border-l-0 border-[#303030] h-10 px-5 text-[#aaa] hover:text-white shrink-0"
+              disabled={loading}
+            >
+              {loading ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />}
+            </Button>
+          </form>
+
+          {/* ショート動画無限スクロールボタン */}
+          <button
+            type="button"
+            onClick={() => {
+              setShortsMode(true);
+              setShortsIndex(0);
+              if (shortsList.length === 0) void loadShortsFeed(false);
+            }}
+            className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-full bg-gradient-to-r from-red-600 to-pink-600 text-white text-xs font-bold shadow hover:opacity-90 shrink-0 transition-all hover:scale-105"
+            title="ショート動画を縦スクロールで連続再生"
           >
-            {loading ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />}
-          </Button>
-        </form>
+            <span>⚡</span>
+            <span>Shorts</span>
+          </button>
+        </div>
 
         {/* 右: 操作アイコン群 */}
         <div className="flex items-center gap-1 sm:gap-2 shrink-0">
-          {/* テレビ認証ボタン（WeTube完全準拠） */}
+          {/* ステルス緊急脱出ボタン（学校PC対策） */}
+          <button
+            type="button"
+            onClick={() => setStealthMode(true)}
+            className="p-2 rounded-full hover:bg-[#272727] text-emerald-400 hover:text-emerald-300 transition-colors"
+            title="EscでGoogle画面に緊急偽装"
+          >
+            <Shield className="size-5" />
+          </button>
+
+          {/* テレビ認証ボタン */}
           <button
             type="button"
             onClick={() => setTvAuthOpen(true)}
@@ -638,7 +776,6 @@ export default function RINETubePage() {
         {sidebarOpen && (
           <aside className="w-56 bg-[#0f0f0f] border-r border-[#272727] p-3 shrink-0 flex flex-col justify-between hidden md:flex">
             <div className="space-y-6">
-              {/* メインメニュー */}
               <div className="space-y-1">
                 <button
                   type="button"
@@ -652,6 +789,20 @@ export default function RINETubePage() {
                   <Flame className="size-5 text-red-500" />
                   <span>ホーム</span>
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShortsMode(true);
+                    setShortsIndex(0);
+                    if (shortsList.length === 0) void loadShortsFeed(false);
+                  }}
+                  className="w-full flex items-center gap-4 px-3 py-2.5 rounded-xl text-sm font-semibold hover:bg-[#272727] text-red-400 hover:text-red-300 transition-colors"
+                >
+                  <span className="text-lg">⚡</span>
+                  <span>ショート動画</span>
+                </button>
+
                 <button
                   type="button"
                   onClick={() => {
@@ -663,6 +814,7 @@ export default function RINETubePage() {
                   <Music className="size-5 text-blue-400" />
                   <span>急上昇</span>
                 </button>
+
                 <button
                   type="button"
                   onClick={() => setHistoryOpen(true)}
@@ -709,8 +861,8 @@ export default function RINETubePage() {
             </div>
 
             <div className="text-[11px] text-[#606060] px-3 space-y-1">
-              <p>RINETube v2.9</p>
-              <p>広告なし・完全無料</p>
+              <p>RINETube v3.0</p>
+              <p>広告なし・止まらない無限再生</p>
             </div>
           </aside>
         )}
@@ -811,17 +963,35 @@ export default function RINETubePage() {
                     <Share2 className="size-4" />
                     <span>共有</span>
                   </button>
+                  {/* WatchParty用共有ボタン */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(
+                        `【RINE上映会】「${currentVideoTitle}」を一緒に見よう！\n${window.location.origin}/youtube?v=${currentVideoId}`,
+                      );
+                      toast.success("上映会リンクをコピーしました！チャットに貼り付けて友達を招待できます");
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors shadow"
+                  >
+                    <MessageSquare className="size-4" />
+                    <span>トークで上映会</span>
+                  </button>
                 </div>
               </div>
             </div>
           )}
 
-          {/* 動画サムネイルグリッド（Home Grid） */}
+          {/* 動画サムネイルグリッド（止まらない無限スクロール） */}
           <div>
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-base font-bold text-white flex items-center gap-2">
                 <span>
-                  {selectedCategory === "subs" ? "登録チャンネルの新着" : selectedCategory === "all" ? "おすすめ動画" : "検索結果"}
+                  {selectedCategory === "subs"
+                    ? "登録チャンネルの新着"
+                    : selectedCategory === "all"
+                      ? "おすすめ動画"
+                      : "検索結果"}
                 </span>
                 {loading && <Loader2 className="size-4 animate-spin text-red-500" />}
               </h2>
@@ -841,7 +1011,6 @@ export default function RINETubePage() {
                         : "hover:bg-[#1f1f1f] border border-transparent"
                     }`}
                   >
-                    {/* サムネイル */}
                     <div className="relative aspect-video rounded-xl overflow-hidden bg-[#272727]">
                       <img
                         src={`https://i.ytimg.com/vi/${v.id}/mqdefault.jpg`}
@@ -863,7 +1032,6 @@ export default function RINETubePage() {
                       )}
                     </div>
 
-                    {/* タイトル & チャンネル */}
                     <div className="flex gap-2.5">
                       <div className="size-8 rounded-full bg-[#272727] flex items-center justify-center text-xs font-bold text-white shrink-0 mt-0.5">
                         {v.author ? v.author.slice(0, 1) : "Y"}
@@ -883,27 +1051,111 @@ export default function RINETubePage() {
                 );
               })}
             </div>
-            <div ref={sentinelRef} className="h-10" />
+
+            {/* 無限スクロール検知マーカー */}
+            <div ref={sentinelRef} className="h-14" />
             <div className="flex justify-center py-4">
               {loadingMore ? (
-                <Loader2 className="size-6 animate-spin text-red-500" />
-              ) : hasMore ? (
+                <div className="flex items-center gap-2 text-xs text-[#aaa]">
+                  <Loader2 className="size-5 animate-spin text-red-500" />
+                  <span>次の動画を自動読み込み中…</span>
+                </div>
+              ) : (
                 <button
                   type="button"
                   onClick={() => loadMoreRef.current()}
-                  className="px-4 py-2 rounded-full bg-[#272727] text-white text-xs font-semibold hover:bg-[#383838]"
+                  className="px-5 py-2 rounded-full bg-[#272727] text-white text-xs font-semibold hover:bg-[#383838] transition-colors"
                 >
-                  もっと見る
+                  もっと読み込む ⬇
                 </button>
-              ) : (
-                <span className="text-xs text-[#717171]">これ以上ありません</span>
               )}
             </div>
           </div>
         </main>
       </div>
 
-      {/* 4. WeTube完全準拠：テレビ認証モーダル（YouTube TV OAuth2 Dialog） */}
+      {/* 4. YouTube Shorts（ショート動画）縦型フルスクリーン・無限スクロールプレイヤー */}
+      {shortsMode && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 backdrop-blur-md p-2 sm:p-4">
+          <div className="relative flex flex-col items-center w-full max-w-sm h-full max-h-[88vh] bg-[#121212] rounded-3xl overflow-hidden shadow-2xl border border-white/10">
+            {/* 上部ヘッダー */}
+            <div className="absolute top-3 left-3 right-3 z-20 flex items-center justify-between pointer-events-auto">
+              <span className="bg-red-600 text-white text-[11px] font-bold px-2.5 py-0.5 rounded-full shadow">
+                ⚡ Shorts {shortsIndex + 1}/{shortsList.length}
+              </span>
+              <button
+                type="button"
+                onClick={() => setShortsMode(false)}
+                className="size-8 rounded-full bg-black/70 text-white flex items-center justify-center hover:bg-black/90 shadow transition-colors"
+                aria-label="閉じる"
+              >
+                <X className="size-5" />
+              </button>
+            </div>
+
+            {/* 縦型動画フレーム */}
+            <div className="w-full flex-1 bg-black flex items-center justify-center relative">
+              {shortsList[shortsIndex] ? (
+                <iframe
+                  key={shortsList[shortsIndex].id}
+                  src={`https://www.youtube-nocookie.com/embed/${shortsList[shortsIndex].id}?autoplay=1&playsinline=1&rel=0&loop=1`}
+                  title={shortsList[shortsIndex].title}
+                  className="w-full h-full border-0"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                />
+              ) : (
+                <div className="flex flex-col items-center gap-2 text-white text-xs">
+                  <Loader2 className="size-6 animate-spin text-red-500" />
+                  <span>ショート動画を準備中…</span>
+                </div>
+              )}
+
+              {/* 上下操作用フローティング矢印ボタン */}
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 flex flex-col gap-3 z-20">
+                <button
+                  type="button"
+                  onClick={prevShort}
+                  disabled={shortsIndex === 0}
+                  className="size-10 rounded-full bg-black/60 hover:bg-black/80 disabled:opacity-30 text-white flex items-center justify-center shadow backdrop-blur transition-all"
+                  title="前のShorts（↑キー）"
+                >
+                  <ChevronUp className="size-6" />
+                </button>
+                <button
+                  type="button"
+                  onClick={nextShort}
+                  className="size-10 rounded-full bg-red-600 hover:bg-red-500 text-white flex items-center justify-center shadow backdrop-blur transition-all"
+                  title="次のShorts（↓キー）"
+                >
+                  <ChevronDown className="size-6" />
+                </button>
+              </div>
+            </div>
+
+            {/* 下部情報バー */}
+            <div className="w-full p-3.5 bg-gradient-to-t from-black via-black/90 to-transparent flex items-center justify-between gap-3">
+              <div className="flex-1 min-w-0">
+                <p className="text-xs text-white font-semibold line-clamp-1">
+                  {shortsList[shortsIndex]?.title || "ショート動画"}
+                </p>
+                <p className="text-[10px] text-[#aaa] truncate">
+                  {shortsList[shortsIndex]?.author}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={nextShort}
+                className="px-3.5 py-1.5 rounded-full bg-red-600 text-white text-xs font-bold shrink-0 hover:bg-red-700 shadow transition-colors"
+              >
+                次のShorts ⬇
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5. テレビ認証モーダル（YouTube TV OAuth2） */}
       {tvAuthOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm animate-in fade-in duration-200"
@@ -913,7 +1165,6 @@ export default function RINETubePage() {
             className="w-full max-w-lg bg-[#212121] border border-[#383838] rounded-2xl p-6 shadow-2xl relative space-y-5"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* 閉じるボタン */}
             <button
               type="button"
               onClick={() => {
@@ -926,7 +1177,6 @@ export default function RINETubePage() {
               <X className="size-5" />
             </button>
 
-            {/* ① 未ログイン状態 */}
             {authStatus === "signed_out" && (
               <div className="space-y-4">
                 <div className="flex items-center gap-3">
@@ -957,7 +1207,6 @@ export default function RINETubePage() {
               </div>
             )}
 
-            {/* ② 認証開始中 / コード待機中（Pending） */}
             {(authStatus === "starting" || authStatus === "pending") && (
               <div className="space-y-5">
                 <div className="flex items-center gap-3 pb-3 border-b border-[#383838]">
@@ -970,7 +1219,6 @@ export default function RINETubePage() {
                   </div>
                 </div>
 
-                {/* 3ステップ表示 */}
                 <div className="grid grid-cols-3 gap-2 text-center text-xs">
                   <div className="bg-[#181818] p-2.5 rounded-xl border border-[#333] space-y-1">
                     <span className="inline-block size-5 rounded-full bg-red-600 text-white font-bold leading-5 text-[11px]">
@@ -992,7 +1240,6 @@ export default function RINETubePage() {
                   </div>
                 </div>
 
-                {/* 認証ページへのリンクボタン */}
                 <a
                   href={verificationUrl}
                   target="_blank"
@@ -1003,7 +1250,6 @@ export default function RINETubePage() {
                   <ExternalLink className="size-4 text-[#aaa] group-hover:text-white" />
                 </a>
 
-                {/* 認証コード表示ボックス */}
                 <div className="bg-[#141414] border border-[#383838] rounded-xl p-4 text-center space-y-2">
                   <span className="text-xs text-[#888] font-semibold block">認証コード</span>
                   {authStatus === "starting" ? (
@@ -1029,7 +1275,6 @@ export default function RINETubePage() {
                   <small className="text-[11px] text-[#777] block">コードをクリックするとコピーできます</small>
                 </div>
 
-                {/* 待機メッセージ */}
                 <div className="flex items-center justify-center gap-2 text-xs text-[#aaa]">
                   <Loader2 className="size-4 animate-spin text-red-500" />
                   <span>認証を待っています…（スマホやPCで承認してください）</span>
@@ -1037,7 +1282,6 @@ export default function RINETubePage() {
               </div>
             )}
 
-            {/* ③ ログイン完了状態（Signed In） */}
             {authStatus === "signed_in" && account && (
               <div className="space-y-5">
                 <div className="flex items-center gap-3 pb-3 border-b border-[#383838]">
@@ -1090,7 +1334,7 @@ export default function RINETubePage() {
         </div>
       )}
 
-      {/* 5. 再生履歴モーダル */}
+      {/* 6. 再生履歴モーダル */}
       {historyOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
@@ -1161,7 +1405,7 @@ export default function RINETubePage() {
         </div>
       )}
 
-      {/* 6. 再生設定モーダル */}
+      {/* 7. 再生設定モーダル */}
       {settingsOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
