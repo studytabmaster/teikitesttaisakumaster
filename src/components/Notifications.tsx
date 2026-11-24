@@ -59,17 +59,17 @@ export function Notifications() {
     return name;
   };
 
-  // 節約: 画面を離れて10分たったら通知用の接続を休止し、戻ったら即再開する
+  // 節約: 画面を離れて2分たったら通知用の接続を休止し、戻ったら即再開する（10分→2分に短縮して接続数を削減）
   const [active, setActive] = useState(true);
-  // 接続が切れたときの自動再接続用（値が変わると購読をやり直す）
   const [retryKey, setRetryKey] = useState(0);
   const retryDelay = useRef(5000);
+
   useEffect(() => {
     let timer: number | undefined;
     const onVis = () => {
       window.clearTimeout(timer);
       if (document.visibilityState === "hidden") {
-        timer = window.setTimeout(() => setActive(false), 10 * 60 * 1000);
+        timer = window.setTimeout(() => setActive(false), 2 * 60 * 1000);
       } else {
         setActive(true);
       }
@@ -88,7 +88,7 @@ export function Notifications() {
     if (!user || !active) return;
     let cancelled = false;
     let retryTimer: number | undefined;
-    // 切断・エラー時は 5秒→10秒→…最大2分 の間隔で自動再接続（サーバーに負担をかけない）
+
     const onStatus = (status: string) => {
       if (cancelled) return;
       if (status === "SUBSCRIBED") {
@@ -102,14 +102,14 @@ export function Notifications() {
     };
     const myGroups = new Set<string>();
 
-    // 通知対象は直近の20ルームまで（受信量を抑えてクラウド費用を節約）
+    // 自分が参加しているルーム一覧を取得
     const loadGroups = async () => {
       const { data } = await supabase
         .from("group_members")
         .select("group_id")
         .eq("user_id", user.id)
         .order("created_at", { ascending: false })
-        .limit(20);
+        .limit(30);
       for (const row of data ?? []) myGroups.add(row.group_id);
     };
 
@@ -137,7 +137,6 @@ export function Notifications() {
                   : "画像が届きました"
                 : m.content;
           showMessageNotification(from, body, `rine-dm-${m.sender_id}`);
-          // 画面を見ているときはアプリ内トーストで知らせる（開いているトーク以外）
           if (
             typeof document !== "undefined" &&
             document.visibilityState === "visible" &&
@@ -147,7 +146,6 @@ export function Notifications() {
           }
         },
       )
-      // ルームに参加できたとき
       // ルームに参加できたとき
       .on(
         "postgres_changes",
@@ -189,8 +187,7 @@ export function Notifications() {
       )
       .subscribe(onStatus);
 
-    // グループ・オープンチャットの新着（見える範囲は参加中のルームだけ＝データベース側で制限）
-    // 1本の購読で、あとから参加したルームも自動で対象になる
+    // グループ・オープンチャットの新着
     let groupChannel: ReturnType<typeof supabase.channel> | null = null;
     void loadGroups();
     groupChannel = supabase
@@ -200,9 +197,12 @@ export function Notifications() {
         { event: "INSERT", schema: "public", table: "group_messages" },
         async (payload) => {
           const m = payload.new as GroupMessage;
-          if (m.sender_id === user.id) return;
+          // 送信者が自分、または自分が所属していないルームの発言は完全に無視（DB負荷カット）
+          if (m.sender_id === user.id || !myGroups.has(m.group_id)) return;
+
           const [room, from] = await Promise.all([groupName(m.group_id), senderName(m.sender_id)]);
           if (cancelled) return;
+
           if (m.media_type === "call_start") {
             if (groupCallRef.current && groupCallRef.current.status !== "idle") return;
             startRingtone();
@@ -233,18 +233,20 @@ export function Notifications() {
             });
             return;
           }
+
           if (m.media_type === "call_end" || m.media_type === "system") return;
           const body = m.image_url
             ? m.media_type === "video"
               ? `${from}：動画`
               : `${from}：画像`
             : `${from}：${m.content}`;
-          showMessageNotification(room, body, `rine-group-${m.group_id}`);
+          showMessageNotification(`「${room}」`, body, `rine-group-${m.group_id}`);
           if (
+            typeof document !== "undefined" &&
             document.visibilityState === "visible" &&
             !window.location.pathname.includes(m.group_id)
           ) {
-            toast(room, { description: body });
+            toast(`「${room}」`, { description: body });
           }
         },
       )
