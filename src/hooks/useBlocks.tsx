@@ -2,7 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 
-/** 自分がブロックしている相手のIDセットを購読するフック */
+/** 
+ * 自分がブロックしている相手のIDセットを取得するフック
+ * （負荷軽減：常時WebSocketを張らず、操作時と画面表示時のみ取得）
+ */
 export function useBlocks() {
   const { user } = useAuth();
   const [blockedIds, setBlockedIds] = useState<string[]>([]);
@@ -18,20 +21,6 @@ export function useBlocks() {
   useEffect(() => {
     if (!user) return;
     void load();
-    const channel = supabase
-      .channel(`blocks-sync-${user.id}-${crypto.randomUUID()}`)
-      // 自分のブロック行だけを購読（全ユーザー分を受け取らない）
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "blocks", filter: `blocker_id=eq.${user.id}` },
-        () => {
-          void load();
-        },
-      )
-      .subscribe();
-    return () => {
-      void supabase.removeChannel(channel);
-    };
   }, [user, load]);
 
   const block = useCallback(
